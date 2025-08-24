@@ -1,0 +1,14 @@
+# PDF processing
+PyMuPDF==1.24.9
+pytesseract==0.3.13
+Pillow==10.4.0
+
+# UI
+gradio==4.36.1
+
+# LLM / Embeddings
+torch==2.2.0
+numpy==1.26.4
+langchain==0.1.222
+langchain-ollama==0.0.12
+faiss-cpu==1.7.4
