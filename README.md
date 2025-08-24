@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=timeGradient&height=200&section=header&text=📑%20PDF%20Q'n'A%20Assistant&fontSize=60&fontAlign=50" alt="PDF Q&A Assistant">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=timeGradient&height=200&section=header&text=📑%20PDF%20Q%20'n'%20A%20Assistant&fontSize=60&fontAlign=50" alt="PDF Q&A Assistant">
 </p>
 
 <p align="center">
