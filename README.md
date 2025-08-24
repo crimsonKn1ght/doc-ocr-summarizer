@@ -1,19 +1,19 @@
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=timeGradient&height=200&section=header&text=📑%20PDF%20Q%20'n'%20A%20Assistant&fontSize=60&fontAlign=50" alt="PDF Q&A Assistant">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=timeGradient&height=200&section=header&text=📑%20PDF%20QnA%20Assistant&fontSize=60&fontAlign=50" alt="PDF Q&A Assistant">
 </p>
 
 <p align="center">
-  <a href="https://github.com/crimsonKn1ght/doc-ocr-summarizer/stargazers">
-    <img src="https://img.shields.io/github/stars/crimsonKn1ght/doc-ocr-summarizer?style=for-the-badge" alt="GitHub stars">
+  <a href="https://github.com/crimsonKn1ght/pdf-qna/stargazers">
+    <img src="https://img.shields.io/github/stars/crimsonKn1ght/pdf-qna?style=for-the-badge" alt="GitHub stars">
   </a>
-  <a href="https://github.com/crimsonKn1ght/doc-ocr-summarizer/network/members">
-    <img src="https://img.shields.io/github/forks/crimsonKn1ght/doc-ocr-summarizer?style=for-the-badge" alt="GitHub forks">
+  <a href="https://github.com/crimsonKn1ght/pdf-qna/network/members">
+    <img src="https://img.shields.io/github/forks/crimsonKn1ght/pdf-qna?style=for-the-badge" alt="GitHub forks">
   </a>
-  <a href="https://github.com/crimsonKn1ght/doc-ocr-summarizer/graphs/commit-activity">
+  <a href="https://github.com/crimsonKn1ght/pdf-qna/graphs/commit-activity">
     <img src="https://img.shields.io/maintenance/yes/2025?style=for-the-badge" alt="Maintained">
   </a>
-  <a href="https://github.com/crimsonKn1ght/doc-ocr-summarizer">
-    <img src="https://img.shields.io/github/languages/top/crimsonKn1ght/doc-ocr-summarizer?style=for-the-badge" alt="Language">
+  <a href="https://github.com/crimsonKn1ght/pdf-qna">
+    <img src="https://img.shields.io/github/languages/top/crimsonKn1ght/pdf-qna?style=for-the-badge" alt="Language">
   </a>
 </p>
 
