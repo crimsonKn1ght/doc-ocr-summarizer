@@ -1,14 +1,35 @@
+Excellent! To get your application on the web, we'll switch from the local LLaMA 3.1 model to a hosted one. This makes your app lightweight and easy to deploy on free platforms.
+
+We'll use Groq to run the Llama 3.1 model, as it's incredibly fast and has a generous free tier. For the embeddings, we'll use a free model from Hugging Face.
+
+Here's your step-by-step guide to making your PDF Q&A app web-hosted.
+
+Step 1: Get Your Free Groq API Key
+First, you'll need an API key from Groq to use their service.
+
+Create an account: Go to the Groq website and sign up for a free account.
+
+Get your API key: Once you're logged in, navigate to the "API Keys" section and create a new key. Copy it and keep it safe—you'll need it in a moment.
+
+Step 2: Update Your Project Files
+Now, let's modify the code to use Groq and prepare it for deployment.
+
+A. Updated requirements.txt
+Your new requirements.txt will need a few changes. We're adding libraries for Streamlit, Groq, and Hugging Face embeddings, and removing langchain-ollama.
+
 # PDF processing
 PyMuPDF==1.24.9
 pytesseract==0.3.13
 Pillow==10.4.0
 
 # UI
-gradio==4.36.1
+streamlit
 
 # LLM / Embeddings
 torch==2.2.0
 numpy==1.26.4
 langchain==0.1.222
-langchain-ollama==0.0.12
 faiss-cpu==1.7.4
+langchain-groq
+langchain-huggingface
+python-dotenv
