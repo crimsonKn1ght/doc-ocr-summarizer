@@ -8,7 +8,8 @@ import gradio as gr
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
 from langchain.chains import RetrievalQA
 
 
@@ -54,11 +55,11 @@ def build_qa_chain(pdf_path):
         raise ValueError("Text splitting produced no chunks.")
 
     # Embeddings + vectorstore
-    embeddings = OllamaEmbeddings(model="llama3.1")  # local LLaMA 3.1
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vectordb = FAISS.from_documents(chunks, embeddings)
 
     # Retrieval QA chain
-    llm = OllamaLLM(model="llama3.1")
+    llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
     retriever = vectordb.as_retriever(search_kwargs={"k": 3})
     qa = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
     return qa
@@ -81,7 +82,7 @@ demo = gr.Interface(
             gr.Textbox(label="Ask a Question")],
     outputs="text",
     title="📑 Multimodal PDF Q&A Assistant",
-    description="Upload a PDF (scanned or digital) and ask questions. Uses LLaMA 3.1 embeddings locally."
+    description="Upload a PDF (scanned or digital) and ask questions. Uses Hugging Face embeddings + Groq Llama 3.3 70B."
 )
 
 if __name__ == "__main__":

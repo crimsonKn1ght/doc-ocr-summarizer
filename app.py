@@ -66,7 +66,7 @@ def build_qa_chain(_pdf_file):
         vectordb = FAISS.from_documents(chunks, embeddings)
 
         # Use Groq for the LLM
-        llm = ChatGroq(model_name="llama3-70b-8192", temperature=0)
+        llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
         retriever = vectordb.as_retriever(search_kwargs={"k": 3})
         qa = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
         return qa
@@ -78,7 +78,7 @@ def build_qa_chain(_pdf_file):
 st.set_page_config(page_title="Multimodal PDF Q&A Assistant", page_icon="📑")
 
 st.title("📑 Multimodal PDF Q&A Assistant")
-st.markdown("Upload a PDF (scanned or digital) and ask questions. This app is powered by Llama 3.1 via Groq.")
+st.markdown("Upload a PDF (scanned or digital) and ask questions. This app is powered by Llama 3.3 70B via Groq.")
 
 # Securely get the Groq API key
 groq_api_key = os.environ.get("GROQ_API_KEY")
