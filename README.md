@@ -56,8 +56,8 @@ python pdf_detector.py
 ## Installation
 1. Clone the repo:
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
-cd YOUR_REPO
+git clone https://github.com/crimsonKn1ght/pdf-qna.git
+cd pdf-qna
 ```
 
 2. Create a virtual environment and install dependencies:
