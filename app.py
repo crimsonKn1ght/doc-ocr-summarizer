@@ -38,7 +38,6 @@ def ocr_pdf(pdf_path):
 
 
 # ---- Build LangChain QA system ----
-@st.cache_resource
 def build_qa_chain(_pdf_file):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmpfile:
         tmpfile.write(_pdf_file.getvalue())
@@ -101,3 +100,4 @@ if uploaded_file is not None and question:
             st.write(result)
         except Exception as e:
             st.error(f"An error occurred: {e}")
+            
