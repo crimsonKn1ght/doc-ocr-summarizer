@@ -4,7 +4,7 @@ from typing import List, Tuple
 import io
 
 import streamlit as st
-from langchain.chains import RetrievalQA
+from langchain_community.chains import RetrievalQA
 from langchain.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -167,4 +167,3 @@ if prompt := st.chat_input("Ask a question about your documents"):
                 st.error(f"An error occurred: {e}")
     else:
         st.warning("Please upload at least one document.")
-        
