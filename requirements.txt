@@ -7,11 +7,16 @@ python-docx
 # UI
 streamlit
 
-# LLM / Embeddings
-torch==2.5.1
-faiss-cpu==1.12.0
-langchain==0.3.0
-langchain-community
-langchain-groq
-langchain-huggingface
+# LLM / Embeddings - Updated versions for compatibility
+langchain==0.2.16
+langchain-community==0.2.16
+langchain-groq==0.1.9
+langchain-huggingface==0.0.3
+sentence-transformers
+faiss-cpu==1.8.0
 python-dotenv
+
+# PyTorch - using a more stable version
+torch==2.3.1
+torchvision==0.18.1
+torchaudio==2.3.1

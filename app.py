@@ -4,7 +4,7 @@ from typing import List, Tuple
 import io
 
 import streamlit as st
-from langchain_community.chains import RetrievalQA
+from langchain.chains import RetrievalQA
 from langchain.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -112,9 +112,9 @@ def build_qa_chain(texts: List[Tuple[str, str]]) -> RetrievalQA:
 
 # --- Streamlit Interface ---
 
-st.set_page_config(page_title="Multimodal Document Q&A Assistant", page_icon="📑", layout="wide")
+st.set_page_config(page_title="Multimodal Document Q&A Assistant", page_icon="📄", layout="wide")
 
-st.title("📑 Multimodal Document Q&A Assistant")
+st.title("📄 Multimodal Document Q&A Assistant")
 st.markdown("Upload your documents (PDF, DOCX, TXT) and ask questions. This app uses OCR to extract text from images in your documents. Powered by Llama 3.3 70B via Groq.")
 
 # API Key Management
@@ -127,6 +127,9 @@ if not groq_api_key:
 if not groq_api_key:
     st.warning("Please enter your Groq API key in the sidebar to continue.")
     st.stop()
+
+# Set the API key for langchain_groq
+os.environ["GROQ_API_KEY"] = groq_api_key
 
 # Initialize chat history
 if "messages" not in st.session_state:
@@ -167,3 +170,4 @@ if prompt := st.chat_input("Ask a question about your documents"):
                 st.error(f"An error occurred: {e}")
     else:
         st.warning("Please upload at least one document.")
+        
