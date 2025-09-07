@@ -4,12 +4,13 @@ from typing import List, Tuple
 import io
 
 import streamlit as st
-from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
 from PIL import Image
 import pytesseract
 
@@ -91,24 +92,49 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
 
     return extracted_texts
 
-# --- LangChain QA System ---
+# --- Modern LangChain QA System ---
 
-def build_qa_chain(texts: List[Tuple[str, str]]) -> RetrievalQA:
-    """Builds the LangChain QA system."""
-    documents = [Document(page_content=text, metadata={"source": source}) for source, text in texts]
+class DocumentQA:
+    def __init__(self, texts: List[Tuple[str, str]]):
+        # Create documents
+        self.documents = [Document(page_content=text, metadata={"source": source}) for source, text in texts]
+        
+        # Split text
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        self.chunks = splitter.split_documents(self.documents)
+        
+        if not self.chunks:
+            raise ValueError("Text splitting produced no chunks.")
+        
+        # Create embeddings and vector store
+        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        self.vectordb = FAISS.from_documents(self.chunks, embeddings)
+        
+        # Initialize LLM
+        self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
+        
+        # Create prompt template
+        self.prompt_template = PromptTemplate(
+            input_variables=["context", "question"],
+            template="""Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = splitter.split_documents(documents)
+Context: {context}
 
-    if not chunks:
-        raise ValueError("Text splitting produced no chunks.")
+Question: {question}
 
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vectordb = FAISS.from_documents(chunks, embeddings)
-
-    llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
-    retriever = vectordb.as_retriever(search_kwargs={"k": 3})
-    return RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
+Answer:"""
+        )
+    
+    def answer_question(self, question: str) -> str:
+        # Retrieve relevant documents
+        relevant_docs = self.vectordb.similarity_search(question, k=3)
+        context = "\n\n".join([doc.page_content for doc in relevant_docs])
+        
+        # Create chain and get answer
+        chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
+        response = chain.run(context=context, question=question)
+        
+        return response
 
 # --- Streamlit Interface ---
 
@@ -135,12 +161,28 @@ os.environ["GROQ_API_KEY"] = groq_api_key
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Initialize QA system
+if "qa_system" not in st.session_state:
+    st.session_state.qa_system = None
+
 # File Uploader
 with st.sidebar:
     st.header("Upload Your Documents")
     uploaded_files = st.file_uploader(
         "Upload your documents", type=["pdf", "docx", "txt"], accept_multiple_files=True
     )
+    
+    if uploaded_files and (st.session_state.qa_system is None or st.button("Reprocess Documents")):
+        with st.spinner("Processing documents..."):
+            try:
+                extracted_texts = get_text_from_files(uploaded_files)
+                if extracted_texts:
+                    st.session_state.qa_system = DocumentQA(extracted_texts)
+                    st.success(f"Successfully processed {len(extracted_texts)} documents!")
+                else:
+                    st.error("Could not extract any text from the uploaded documents.")
+            except Exception as e:
+                st.error(f"Error processing documents: {e}")
 
 # Display chat messages from history
 for message in st.session_state.messages:
@@ -153,20 +195,17 @@ if prompt := st.chat_input("Ask a question about your documents"):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    if uploaded_files:
-        with st.spinner("Processing documents and getting your answer..."):
+    if st.session_state.qa_system is not None:
+        with st.spinner("Getting your answer..."):
             try:
-                extracted_texts = get_text_from_files(uploaded_files)
-                if not extracted_texts:
-                    st.error("Could not extract any text from the uploaded documents.")
-                else:
-                    qa_chain = build_qa_chain(extracted_texts)
-                    result = qa_chain.run(prompt)
-                    with st.chat_message("assistant"):
-                        st.markdown(result)
-                    st.session_state.messages.append({"role": "assistant", "content": result})
-
+                result = st.session_state.qa_system.answer_question(prompt)
+                with st.chat_message("assistant"):
+                    st.markdown(result)
+                st.session_state.messages.append({"role": "assistant", "content": result})
             except Exception as e:
                 st.error(f"An error occurred: {e}")
     else:
-        st.warning("Please upload at least one document.")
+        with st.chat_message("assistant"):
+            message = "Please upload at least one document first to start asking questions."
+            st.markdown(message)
+        st.session_state.messages.append({"role": "assistant", "content": message})
