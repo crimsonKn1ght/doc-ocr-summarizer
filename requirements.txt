@@ -1,22 +1,22 @@
-# PDF processing
-PyMuPDF==1.24.9
-pytesseract==0.3.13
-Pillow==10.4.0
-python-docx
-
 # UI
 streamlit
 
-# LLM / Embeddings - Updated versions for compatibility
-langchain==0.2.16
-langchain-community==0.2.16
-langchain-groq==0.1.9
-langchain-huggingface==0.0.3
-sentence-transformers
-faiss-cpu==1.8.0
-python-dotenv
+# PDF processing
+PyMuPDF==1.23.26
+pytesseract==0.3.10
+Pillow==10.0.1
+python-docx==1.1.0
 
-# PyTorch - using a more stable version
-torch==2.3.1
-torchvision==0.18.1
-torchaudio==2.3.1
+# LLM / Embeddings - Conservative versions that work well together
+langchain==0.1.20
+langchain-community==0.0.38
+langchain-groq==0.1.5
+langchain-huggingface==0.0.3
+sentence-transformers==2.2.2
+faiss-cpu==1.7.4
+python-dotenv==1.0.0
+
+# PyTorch - Streamlit Cloud compatible
+torch==2.1.2
+torchvision==0.16.2
+torchaudio==2.1.2
