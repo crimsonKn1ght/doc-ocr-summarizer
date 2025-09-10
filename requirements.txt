@@ -7,12 +7,12 @@ pytesseract==0.3.10
 Pillow==10.0.1
 python-docx==1.1.0
 
-# LLM / Embeddings - Conservative versions that work well together
+# LLM / Embeddings - Compatible versions
 langchain==0.1.20
 langchain-community==0.0.38
 langchain-groq==0.1.5
 langchain-huggingface==0.0.3
-sentence-transformers==2.2.2
+sentence-transformers>=2.6.0
 faiss-cpu==1.7.4
 python-dotenv==1.0.0
 
