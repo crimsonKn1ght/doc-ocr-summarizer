@@ -16,14 +16,20 @@ from PIL import Image
 import pytesseract
 from supabase import create_client
 
+# --- Safe Secret Masking ---
+def mask_secret(secret: str, keep: int = 4) -> str:
+    if not secret:
+        return "MISSING"
+    return secret[:keep] + "..." + secret[-keep:]
+
 # --- Supabase Setup ---
 SUPABASE_URL = st.secrets.get("SUPABASE_URL")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
 
 st.write("Supabase URL loaded:", bool(SUPABASE_URL))
 st.write("Supabase Key loaded:", bool(SUPABASE_KEY))
-st.write("URL repr:", repr(SUPABASE_URL))
-st.write("KEY prefix repr:", repr(SUPABASE_KEY[:5] + "...") if SUPABASE_KEY else None)
+st.write("URL check:", "valid" if SUPABASE_URL and SUPABASE_URL.startswith("http") else "invalid")
+st.write("Key check:", mask_secret(SUPABASE_KEY))
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     st.error("❌ Missing Supabase credentials. Please set SUPABASE_URL and SUPABASE_KEY in Streamlit Cloud → Settings → Secrets")
@@ -33,7 +39,7 @@ try:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     st.success("✅ Supabase client initialized successfully")
 except Exception as e:
-    st.error(f"❌ Failed to init Supabase client: {e}")
+    st.error(f"❌ Failed to init Supabase client: {type(e).__name__} - {e}")
     st.stop()
 
 # --- OCR Function ---
