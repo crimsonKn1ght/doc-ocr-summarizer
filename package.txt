@@ -3,6 +3,7 @@ tesseract-ocr-eng
 libtesseract-dev
 build-essential
 cmake
+pkg-config
 libfreetype6-dev
 libharfbuzz-dev
 libjpeg-dev
