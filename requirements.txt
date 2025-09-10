@@ -17,7 +17,7 @@ faiss-cpu==1.7.4
 python-dotenv==1.0.0
 
 # Supabase client
-supabase-py==2.4.0
+supabase==2.4.0
 
 # PyTorch (CPU builds — safe for Streamlit Cloud)
 torch==2.2.2+cpu
