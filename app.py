@@ -144,13 +144,28 @@ Answer:"""
     def answer_question(self, question: str) -> str:
         # Retrieve relevant documents
         relevant_docs = self.vectordb.similarity_search(question, k=3)
-        context = "\n\n".join([doc.page_content for doc in relevant_docs])
+        context = "\n\n".join(
+            [f"Source: {doc.metadata.get('source','unknown')}\n{doc.page_content}" for doc in relevant_docs]
+        )
 
         # Create chain and get answer
         chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
         response = chain.run(context=context, question=question)
 
         return response
+
+    def summarize_all_documents(self) -> str:
+        """Summarize each document individually in 5 points."""
+        summaries = []
+        for doc in self.documents:
+            try:
+                summary = self.llm.predict(
+                    f"Summarize the following document in 5 bullet points:\n\n{doc.page_content}"
+                )
+                summaries.append(f"### {doc.metadata['source']}\n{summary}")
+            except Exception as e:
+                summaries.append(f"### {doc.metadata['source']}\n(Summarization failed: {e})")
+        return "\n\n".join(summaries)
 
 
 # --- Streamlit Interface ---
@@ -235,6 +250,12 @@ with st.sidebar:
     if st.button("🗑️ Clear Documents & QA System"):
         st.session_state.qa_system = None
         st.success("All uploaded documents and QA system have been cleared!")
+
+    # Summarize All Documents
+    if st.session_state.qa_system and st.button("📝 Summarize All Documents"):
+        with st.spinner("Summarizing all documents..."):
+            summary_result = st.session_state.qa_system.summarize_all_documents()
+            st.markdown(summary_result)
 
 
 # Display chat messages from history
