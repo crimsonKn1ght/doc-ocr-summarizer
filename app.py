@@ -99,14 +99,13 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
     return extracted_texts
 
 
-# --- Cached VectorDB Builder ---
-@st.cache_resource
-def build_vectordb(_chunks):  # underscore skips hashing
+# --- VectorDB Builder (No longer cached) ---
+def build_vectordb(chunks):
     embeddings = HuggingFaceEmbeddings(
         model_name="all-MiniLM-L6-v2",
         encode_kwargs={"batch_size": 32}  # Faster batching
     )
-    return FAISS.from_documents(_chunks, embeddings)
+    return FAISS.from_documents(chunks, embeddings)
 
 
 # --- Modern LangChain QA System ---
@@ -122,7 +121,7 @@ class DocumentQA:
         if not self.chunks:
             raise ValueError("Text splitting produced no chunks.")
 
-        # Create embeddings and vector store (cached)
+        # Create embeddings and vector store
         self.vectordb = build_vectordb(self.chunks)
 
         # Initialize LLM
