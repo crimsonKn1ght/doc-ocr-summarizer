@@ -18,6 +18,7 @@ python-dotenv==1.0.0
 
 # Supabase client
 supabase==2.4.0
+httpx==0.27.2   # ✅ pin to avoid proxy error
 
 # PyTorch (CPU builds — safe for Streamlit Cloud)
 torch==2.2.2+cpu
