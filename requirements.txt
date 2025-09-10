@@ -21,3 +21,6 @@ torch==2.2.2
 torchvision==0.17.2
 torchaudio==2.2.2
 
+#supabase for storage
+supabase-py==2.4.0
+
