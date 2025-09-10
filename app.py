@@ -34,9 +34,7 @@ def extract_text_from_pdf(pdf_path: str, use_ocr: bool = True) -> str:
     doc = fitz.open(pdf_path)
     text = ""
     for page_num, page in enumerate(doc):
-        # Extract regular text
         text += page.get_text()
-        # Extract and OCR images only if enabled
         if use_ocr:
             image_list = page.get_images(full=True)
             for _, img in enumerate(image_list):
@@ -52,7 +50,6 @@ def extract_text_from_docx(docx_path: str, use_ocr: bool = True) -> str:
     doc = Document(docx_path)
     text = "\n".join(para.text for para in doc.paragraphs)
 
-    # Extract and OCR images
     if use_ocr:
         for rel in doc.part.rels.values():
             if "image" in rel.target_ref:
@@ -99,11 +96,11 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
     return extracted_texts
 
 
-# --- VectorDB Builder (No longer cached) ---
+# --- VectorDB Builder ---
 def build_vectordb(chunks):
     embeddings = HuggingFaceEmbeddings(
         model_name="all-MiniLM-L6-v2",
-        encode_kwargs={"batch_size": 32}  # Faster batching
+        encode_kwargs={"batch_size": 32}
     )
     return FAISS.from_documents(chunks, embeddings)
 
@@ -111,23 +108,17 @@ def build_vectordb(chunks):
 # --- Modern LangChain QA System ---
 class DocumentQA:
     def __init__(self, texts: List[Tuple[str, str]]):
-        # Create documents
         self.documents = [Document(page_content=text, metadata={"source": source}) for source, text in texts]
 
-        # Split text
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         self.chunks = splitter.split_documents(self.documents)
 
         if not self.chunks:
             raise ValueError("Text splitting produced no chunks.")
 
-        # Create embeddings and vector store
         self.vectordb = build_vectordb(self.chunks)
-
-        # Initialize LLM
         self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
 
-        # Create prompt template
         self.prompt_template = PromptTemplate(
             input_variables=["context", "question"],
             template="""Use the following pieces of context to answer the question at the end.
@@ -140,13 +131,21 @@ Question: {question}
 Answer:"""
         )
 
+    def add_documents(self, texts: List[Tuple[str, str]]):
+        new_docs = [Document(page_content=text, metadata={"source": source}) for source, text in texts]
+        self.documents.extend(new_docs)
+
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        new_chunks = splitter.split_documents(new_docs)
+        self.chunks.extend(new_chunks)
+
+        self.vectordb.add_documents(new_chunks)
+
     def answer_question(self, question: str) -> str:
-        # Special handling: if user asks about all/both/uploaded docs → summarize all
         trigger_phrases = ["all documents", "uploaded docs", "both files", "both documents"]
         if any(phrase in question.lower() for phrase in trigger_phrases):
             return self.summarize_all_documents()
 
-        # Otherwise, normal retrieval-based QA
         relevant_docs = self.vectordb.similarity_search(question, k=3)
         context = "\n\n".join(
             [f"Source: {doc.metadata.get('source','unknown')}\n{doc.page_content}" for doc in relevant_docs]
@@ -156,7 +155,6 @@ Answer:"""
         return chain.run(context=context, question=question)
 
     def summarize_all_documents(self) -> str:
-        """Summarize each document individually in 5 points, clearly naming the file."""
         summaries = []
         for doc in self.documents:
             try:
@@ -189,18 +187,17 @@ if not groq_api_key:
     st.warning("Please enter your Groq API key in the sidebar to continue.")
     st.stop()
 
-# Set the API key for langchain_groq
 os.environ["GROQ_API_KEY"] = groq_api_key
 
-# --- Session-based Chat History ---
+# --- Session-based State ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
-# Initialize QA system
 if "qa_system" not in st.session_state:
     st.session_state.qa_system = None
+if "processed_files" not in st.session_state:
+    st.session_state.processed_files = set()
 
-# File Uploader + OCR toggle
+# Sidebar: File Uploader + OCR toggle
 with st.sidebar:
     st.header("Upload Your Documents")
     use_ocr = st.checkbox("Enable OCR for images", value=True)
@@ -209,32 +206,41 @@ with st.sidebar:
     )
 
     if uploaded_files:
-        with st.spinner("Processing documents..."):
-            try:
-                extracted_texts = get_text_from_files(uploaded_files, use_ocr)
-                if extracted_texts:
-                    st.session_state.qa_system = DocumentQA(extracted_texts)
-                    st.success(f"Successfully processed {len(extracted_texts)} documents!")
-                else:
-                    st.error("Could not extract any text from the uploaded documents.")
-            except Exception as e:
-                st.error(f"Error processing documents: {e}")
+        new_files = [f for f in uploaded_files if f.name not in st.session_state.processed_files]
+        if new_files:
+            with st.spinner("Processing new documents..."):
+                try:
+                    extracted_texts = get_text_from_files(new_files, use_ocr)
+                    if extracted_texts:
+                        if st.session_state.qa_system is None:
+                            st.session_state.qa_system = DocumentQA(extracted_texts)
+                        else:
+                            st.session_state.qa_system.add_documents(extracted_texts)
+
+                        for f in new_files:
+                            st.session_state.processed_files.add(f.name)
+
+                        st.success(f"Successfully added {len(extracted_texts)} new documents!")
+                    else:
+                        st.error("No text extracted from new documents.")
+                except Exception as e:
+                    st.error(f"Error processing documents: {e}")
 
     st.divider()
-    # Chat History Controls
     st.subheader("🗑️ New Chat")
     if st.button("Start New Chat"):
         st.session_state.messages = []
         st.session_state.qa_system = None
+        st.session_state.processed_files = set()
         st.success("New chat started!")
 
 
-# Display chat messages from history
+# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Main chat interface
+# Main chat
 if prompt := st.chat_input("Ask a question about your documents"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
