@@ -1,13 +1,13 @@
 # UI
 streamlit
 
-# PDF processing - Use pre-built wheel instead of building from source
+# PDF / OCR / DOCX
 pymupdf==1.24.1
 pytesseract==0.3.10
 Pillow==10.0.1
 python-docx==1.1.0
 
-# LLM / Embeddings - Compatible versions
+# LangChain + Embeddings + Vector DB
 langchain==0.1.20
 langchain-community==0.0.38
 langchain-groq==0.1.5
@@ -16,11 +16,11 @@ sentence-transformers>=2.6.0
 faiss-cpu==1.7.4
 python-dotenv==1.0.0
 
-# PyTorch - Streamlit Cloud compatible
-torch==2.2.2
-torchvision==0.17.2
-torchaudio==2.2.2
-
-#supabase for storage
+# Supabase client
 supabase-py==2.4.0
 
+# PyTorch (CPU builds — safe for Streamlit Cloud)
+torch==2.2.2+cpu
+torchvision==0.17.2+cpu
+torchaudio==2.2.2+cpu
+-f https://download.pytorch.org/whl/torch_stable.html
