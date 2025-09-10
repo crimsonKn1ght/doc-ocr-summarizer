@@ -1,8 +1,7 @@
 # UI
 streamlit
 
-# PDF processing - Use fitz directly instead of PyMuPDF
-fitz==0.0.1.dev2
+# PDF processing - Use pre-built wheel instead of building from source
 pymupdf==1.24.1
 pytesseract==0.3.10
 Pillow==10.0.1
