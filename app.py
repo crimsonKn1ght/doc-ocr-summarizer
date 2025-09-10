@@ -218,6 +218,16 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Failed to load chat history: {e}")
 
+    # Clear Chat History Button
+    if st.button("🗑️ Clear Chat History"):
+        st.session_state.messages = []
+        st.success("Chat history cleared!")
+
+    # Clear Documents & QA System Button
+    if st.button("🗑️ Clear Documents & QA System"):
+        st.session_state.qa_system = None
+        st.success("All uploaded documents and QA system have been cleared!")
+
 
 # Display chat messages from history
 for message in st.session_state.messages:
