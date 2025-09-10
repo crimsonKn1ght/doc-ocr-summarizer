@@ -104,7 +104,7 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
 def build_vectordb(chunks):
     embeddings = HuggingFaceEmbeddings(
         model_name="all-MiniLM-L6-v2",
-        encode_kwargs={"batch_size": 32}  # Faster batching
+        encode_kwargs={"batch_size": 32}
     )
     return FAISS.from_documents(chunks, embeddings)
 
