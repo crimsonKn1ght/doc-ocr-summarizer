@@ -101,12 +101,12 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
 
 # --- Cached VectorDB Builder ---
 @st.cache_resource
-def build_vectordb(chunks):
+def build_vectordb(_chunks):  # underscore skips hashing
     embeddings = HuggingFaceEmbeddings(
         model_name="all-MiniLM-L6-v2",
-        encode_kwargs={"batch_size": 32}
+        encode_kwargs={"batch_size": 32}  # Faster batching
     )
-    return FAISS.from_documents(chunks, embeddings)
+    return FAISS.from_documents(_chunks, embeddings)
 
 
 # --- Modern LangChain QA System ---
@@ -174,9 +174,25 @@ if not groq_api_key:
 # Set the API key for langchain_groq
 os.environ["GROQ_API_KEY"] = groq_api_key
 
-# Initialize chat history
+# --- Persistent Chat History ---
+CHAT_FILE = "chat_history.json"
+
+# Load chat history automatically if exists
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    if os.path.exists(CHAT_FILE):
+        try:
+            with open(CHAT_FILE, "r", encoding="utf-8") as f:
+                st.session_state.messages = json.load(f)
+        except Exception:
+            st.session_state.messages = []
+    else:
+        st.session_state.messages = []
+
+# Save chat history automatically
+def save_chat_history():
+    with open(CHAT_FILE, "w", encoding="utf-8") as f:
+        json.dump(st.session_state.messages, f, indent=2)
+
 
 # Initialize QA system
 if "qa_system" not in st.session_state:
@@ -203,24 +219,16 @@ with st.sidebar:
                 st.error(f"Error processing documents: {e}")
 
     st.divider()
-    # Chat History Save/Load
+    # Chat History Controls
     st.subheader("💾 Chat History")
     if st.session_state.messages:
         chat_json = json.dumps(st.session_state.messages, indent=2)
         st.download_button("Download Chat History", chat_json, file_name="chat_history.json")
 
-    uploaded_chat = st.file_uploader("Upload Chat History (JSON)", type=["json"])
-    if uploaded_chat:
-        try:
-            content = uploaded_chat.read().decode("utf-8")
-            st.session_state.messages = json.loads(content)
-            st.success("Chat history loaded successfully!")
-        except Exception as e:
-            st.error(f"Failed to load chat history: {e}")
-
     # Clear Chat History Button
     if st.button("🗑️ Clear Chat History"):
         st.session_state.messages = []
+        save_chat_history()
         st.success("Chat history cleared!")
 
     # Clear Documents & QA System Button
@@ -237,6 +245,7 @@ for message in st.session_state.messages:
 # Main chat interface
 if prompt := st.chat_input("Ask a question about your documents"):
     st.session_state.messages.append({"role": "user", "content": prompt})
+    save_chat_history()
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -247,6 +256,7 @@ if prompt := st.chat_input("Ask a question about your documents"):
                 with st.chat_message("assistant"):
                     st.markdown(result)
                 st.session_state.messages.append({"role": "assistant", "content": result})
+                save_chat_history()
             except Exception as e:
                 st.error(f"An error occurred: {e}")
     else:
@@ -254,3 +264,4 @@ if prompt := st.chat_input("Ask a question about your documents"):
             message = "Please upload at least one document first to start asking questions."
             st.markdown(message)
         st.session_state.messages.append({"role": "assistant", "content": message})
+        save_chat_history()
