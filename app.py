@@ -22,12 +22,19 @@ SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
 
 st.write("Supabase URL loaded:", bool(SUPABASE_URL))
 st.write("Supabase Key loaded:", bool(SUPABASE_KEY))
+st.write("URL repr:", repr(SUPABASE_URL))
+st.write("KEY prefix repr:", repr(SUPABASE_KEY[:5] + "...") if SUPABASE_KEY else None)
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     st.error("❌ Missing Supabase credentials. Please set SUPABASE_URL and SUPABASE_KEY in Streamlit Cloud → Settings → Secrets")
     st.stop()
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+try:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    st.success("✅ Supabase client initialized successfully")
+except Exception as e:
+    st.error(f"❌ Failed to init Supabase client: {e}")
+    st.stop()
 
 # --- OCR Function ---
 def ocr_image(image_bytes: bytes) -> str:
