@@ -2,6 +2,7 @@ import os
 import tempfile
 from typing import List, Tuple
 import io
+import json
 
 import streamlit as st
 from langchain.schema import Document
@@ -14,8 +15,8 @@ from langchain.chains import LLMChain
 from PIL import Image
 import pytesseract
 
-# --- OCR Function ---
 
+# --- OCR Function ---
 def ocr_image(image_bytes: bytes) -> str:
     """Performs OCR on an image and returns the extracted text."""
     try:
@@ -26,41 +27,46 @@ def ocr_image(image_bytes: bytes) -> str:
         st.warning(f"OCR failed for an image: {e}")
         return ""
 
-# --- Text Extraction ---
 
-def extract_text_from_pdf(pdf_path: str) -> str:
+# --- Text Extraction ---
+def extract_text_from_pdf(pdf_path: str, use_ocr: bool = True) -> str:
     import fitz  # PyMuPDF
     doc = fitz.open(pdf_path)
     text = ""
     for page_num, page in enumerate(doc):
         # Extract regular text
         text += page.get_text()
-        # Extract and OCR images
-        image_list = page.get_images(full=True)
-        for img_index, img in enumerate(image_list):
-            xref = img[0]
-            base_image = doc.extract_image(xref)
-            image_bytes = base_image["image"]
-            text += ocr_image(image_bytes)
+        # Extract and OCR images only if enabled
+        if use_ocr:
+            image_list = page.get_images(full=True)
+            for _, img in enumerate(image_list):
+                xref = img[0]
+                base_image = doc.extract_image(xref)
+                image_bytes = base_image["image"]
+                text += ocr_image(image_bytes)
     return text
 
-def extract_text_from_docx(docx_path: str) -> str:
+
+def extract_text_from_docx(docx_path: str, use_ocr: bool = True) -> str:
     from docx import Document
     doc = Document(docx_path)
     text = "\n".join(para.text for para in doc.paragraphs)
 
     # Extract and OCR images
-    for rel in doc.part.rels.values():
-        if "image" in rel.target_ref:
-            image_bytes = rel.target_part.blob
-            text += ocr_image(image_bytes)
+    if use_ocr:
+        for rel in doc.part.rels.values():
+            if "image" in rel.target_ref:
+                image_bytes = rel.target_part.blob
+                text += ocr_image(image_bytes)
     return text
+
 
 def extract_text_from_txt(txt_path: str) -> str:
     with open(txt_path, "r", encoding="utf-8") as f:
         return f.read()
 
-def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile]) -> List[Tuple[str, str]]:
+
+def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile], use_ocr: bool) -> List[Tuple[str, str]]:
     """Extracts text from uploaded files."""
     extracted_texts = []
     for uploaded_file in uploaded_files:
@@ -71,9 +77,9 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
 
             file_extension = os.path.splitext(uploaded_file.name)[1].lower()
             if file_extension == ".pdf":
-                text = extract_text_from_pdf(tmp_path)
+                text = extract_text_from_pdf(tmp_path, use_ocr)
             elif file_extension == ".docx":
-                text = extract_text_from_docx(tmp_path)
+                text = extract_text_from_docx(tmp_path, use_ocr)
             elif file_extension == ".txt":
                 text = extract_text_from_txt(tmp_path)
             else:
@@ -92,31 +98,41 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
 
     return extracted_texts
 
-# --- Modern LangChain QA System ---
 
+# --- Cached VectorDB Builder ---
+@st.cache_resource
+def build_vectordb(chunks):
+    embeddings = HuggingFaceEmbeddings(
+        model_name="all-MiniLM-L6-v2",
+        encode_kwargs={"batch_size": 32}  # Faster batching
+    )
+    return FAISS.from_documents(chunks, embeddings)
+
+
+# --- Modern LangChain QA System ---
 class DocumentQA:
     def __init__(self, texts: List[Tuple[str, str]]):
         # Create documents
         self.documents = [Document(page_content=text, metadata={"source": source}) for source, text in texts]
-        
+
         # Split text
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         self.chunks = splitter.split_documents(self.documents)
-        
+
         if not self.chunks:
             raise ValueError("Text splitting produced no chunks.")
-        
-        # Create embeddings and vector store
-        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        self.vectordb = FAISS.from_documents(self.chunks, embeddings)
-        
+
+        # Create embeddings and vector store (cached)
+        self.vectordb = build_vectordb(self.chunks)
+
         # Initialize LLM
         self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
-        
+
         # Create prompt template
         self.prompt_template = PromptTemplate(
             input_variables=["context", "question"],
-            template="""Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.
+            template="""Use the following pieces of context to answer the question at the end. 
+If you don't know the answer, just say that you don't know, don't try to make up an answer.
 
 Context: {context}
 
@@ -124,24 +140,25 @@ Question: {question}
 
 Answer:"""
         )
-    
+
     def answer_question(self, question: str) -> str:
         # Retrieve relevant documents
         relevant_docs = self.vectordb.similarity_search(question, k=3)
         context = "\n\n".join([doc.page_content for doc in relevant_docs])
-        
+
         # Create chain and get answer
         chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
         response = chain.run(context=context, question=question)
-        
+
         return response
 
-# --- Streamlit Interface ---
 
+# --- Streamlit Interface ---
 st.set_page_config(page_title="Multimodal Document Q&A Assistant", page_icon="📄", layout="wide")
 
 st.title("📄 Multimodal Document Q&A Assistant")
-st.markdown("Upload your documents (PDF, DOCX, TXT) and ask questions. This app uses OCR to extract text from images in your documents. Powered by Llama 3.3 70B via Groq.")
+st.markdown("Upload your documents (PDF, DOCX, TXT) and ask questions. "
+            "This app uses OCR (optional) to extract text from images in your documents. Powered by Llama 3.3 70B via Groq.")
 
 # API Key Management
 groq_api_key = os.environ.get("GROQ_API_KEY")
@@ -165,17 +182,18 @@ if "messages" not in st.session_state:
 if "qa_system" not in st.session_state:
     st.session_state.qa_system = None
 
-# File Uploader
+# File Uploader + OCR toggle
 with st.sidebar:
     st.header("Upload Your Documents")
+    use_ocr = st.checkbox("Enable OCR for images", value=True)
     uploaded_files = st.file_uploader(
         "Upload your documents", type=["pdf", "docx", "txt"], accept_multiple_files=True
     )
-    
+
     if uploaded_files and (st.session_state.qa_system is None or st.button("Reprocess Documents")):
         with st.spinner("Processing documents..."):
             try:
-                extracted_texts = get_text_from_files(uploaded_files)
+                extracted_texts = get_text_from_files(uploaded_files, use_ocr)
                 if extracted_texts:
                     st.session_state.qa_system = DocumentQA(extracted_texts)
                     st.success(f"Successfully processed {len(extracted_texts)} documents!")
@@ -183,6 +201,23 @@ with st.sidebar:
                     st.error("Could not extract any text from the uploaded documents.")
             except Exception as e:
                 st.error(f"Error processing documents: {e}")
+
+    st.divider()
+    # Chat History Save/Load
+    st.subheader("💾 Chat History")
+    if st.session_state.messages:
+        chat_json = json.dumps(st.session_state.messages, indent=2)
+        st.download_button("Download Chat History", chat_json, file_name="chat_history.json")
+
+    uploaded_chat = st.file_uploader("Upload Chat History (JSON)", type=["json"])
+    if uploaded_chat:
+        try:
+            content = uploaded_chat.read().decode("utf-8")
+            st.session_state.messages = json.loads(content)
+            st.success("Chat history loaded successfully!")
+        except Exception as e:
+            st.error(f"Failed to load chat history: {e}")
+
 
 # Display chat messages from history
 for message in st.session_state.messages:
