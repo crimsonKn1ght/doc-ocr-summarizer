@@ -142,25 +142,29 @@ Answer:"""
         )
 
     def answer_question(self, question: str) -> str:
-        # Retrieve relevant documents
+        # Special handling: if user asks about all/both/uploaded docs → summarize all
+        trigger_phrases = ["all documents", "uploaded docs", "both files", "both documents"]
+        if any(phrase in question.lower() for phrase in trigger_phrases):
+            return self.summarize_all_documents()
+
+        # Otherwise, normal retrieval-based QA
         relevant_docs = self.vectordb.similarity_search(question, k=3)
         context = "\n\n".join(
             [f"Source: {doc.metadata.get('source','unknown')}\n{doc.page_content}" for doc in relevant_docs]
         )
 
-        # Create chain and get answer
         chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
-        response = chain.run(context=context, question=question)
-
-        return response
+        return chain.run(context=context, question=question)
 
     def summarize_all_documents(self) -> str:
-        """Summarize each document individually in 5 points."""
+        """Summarize each document individually in 5 points, clearly naming the file."""
         summaries = []
         for doc in self.documents:
             try:
                 summary = self.llm.predict(
-                    f"Summarize the following document in 5 bullet points:\n\n{doc.page_content}"
+                    f"Summarize the document '{doc.metadata['source']}' in 5 bullet points. "
+                    f"Clearly state what kind of document it is (e.g., CV, research paper, report). "
+                    f"Here is the content:\n\n{doc.page_content}"
                 )
                 summaries.append(f"### {doc.metadata['source']}\n{summary}")
             except Exception as e:
@@ -251,7 +255,7 @@ with st.sidebar:
         st.session_state.qa_system = None
         st.success("All uploaded documents and QA system have been cleared!")
 
-    # Summarize All Documents
+    # Summarize All Documents Button
     if st.session_state.qa_system and st.button("📝 Summarize All Documents"):
         with st.spinner("Summarizing all documents..."):
             summary_result = st.session_state.qa_system.summarize_all_documents()
