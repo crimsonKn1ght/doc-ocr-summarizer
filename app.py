@@ -131,7 +131,7 @@ class DocumentQA:
         # Create prompt template
         self.prompt_template = PromptTemplate(
             input_variables=["context", "question"],
-            template="""Use the following pieces of context to answer the question at the end. 
+            template="""Use the following pieces of context to answer the question at the end.
 If you don't know the answer, just say that you don't know, don't try to make up an answer.
 
 Context: {context}
@@ -193,25 +193,9 @@ if not groq_api_key:
 # Set the API key for langchain_groq
 os.environ["GROQ_API_KEY"] = groq_api_key
 
-# --- Persistent Chat History ---
-CHAT_FILE = "chat_history.json"
-
-# Load chat history automatically if exists
+# --- Session-based Chat History ---
 if "messages" not in st.session_state:
-    if os.path.exists(CHAT_FILE):
-        try:
-            with open(CHAT_FILE, "r", encoding="utf-8") as f:
-                st.session_state.messages = json.load(f)
-        except Exception:
-            st.session_state.messages = []
-    else:
-        st.session_state.messages = []
-
-# Save chat history automatically
-def save_chat_history():
-    with open(CHAT_FILE, "w", encoding="utf-8") as f:
-        json.dump(st.session_state.messages, f, indent=2)
-
+    st.session_state.messages = []
 
 # Initialize QA system
 if "qa_system" not in st.session_state:
@@ -225,7 +209,7 @@ with st.sidebar:
         "Upload your documents", type=["pdf", "docx", "txt"], accept_multiple_files=True
     )
 
-    if uploaded_files and (st.session_state.qa_system is None or st.button("Reprocess Documents")):
+    if uploaded_files:
         with st.spinner("Processing documents..."):
             try:
                 extracted_texts = get_text_from_files(uploaded_files, use_ocr)
@@ -239,27 +223,11 @@ with st.sidebar:
 
     st.divider()
     # Chat History Controls
-    st.subheader("💾 Chat History")
-    if st.session_state.messages:
-        chat_json = json.dumps(st.session_state.messages, indent=2)
-        st.download_button("Download Chat History", chat_json, file_name="chat_history.json")
-
-    # Clear Chat History Button
-    if st.button("🗑️ Clear Chat History"):
+    st.subheader("🗑️ New Chat")
+    if st.button("Start New Chat"):
         st.session_state.messages = []
-        save_chat_history()
-        st.success("Chat history cleared!")
-
-    # Clear Documents & QA System Button
-    if st.button("🗑️ Clear Documents & QA System"):
         st.session_state.qa_system = None
-        st.success("All uploaded documents and QA system have been cleared!")
-
-    # Summarize All Documents Button
-    if st.session_state.qa_system and st.button("📝 Summarize All Documents"):
-        with st.spinner("Summarizing all documents..."):
-            summary_result = st.session_state.qa_system.summarize_all_documents()
-            st.markdown(summary_result)
+        st.success("New chat started!")
 
 
 # Display chat messages from history
@@ -270,7 +238,6 @@ for message in st.session_state.messages:
 # Main chat interface
 if prompt := st.chat_input("Ask a question about your documents"):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    save_chat_history()
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -281,7 +248,6 @@ if prompt := st.chat_input("Ask a question about your documents"):
                 with st.chat_message("assistant"):
                     st.markdown(result)
                 st.session_state.messages.append({"role": "assistant", "content": result})
-                save_chat_history()
             except Exception as e:
                 st.error(f"An error occurred: {e}")
     else:
@@ -289,4 +255,3 @@ if prompt := st.chat_input("Ask a question about your documents"):
             message = "Please upload at least one document first to start asking questions."
             st.markdown(message)
         st.session_state.messages.append({"role": "assistant", "content": message})
-        save_chat_history()
