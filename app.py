@@ -2,7 +2,6 @@ import os
 import tempfile
 from typing import List, Tuple
 import io
-import json
 
 import streamlit as st
 from langchain.schema import Document
@@ -15,7 +14,6 @@ from langchain.chains import LLMChain
 from PIL import Image
 import pytesseract
 
-
 # --- OCR Function ---
 def ocr_image(image_bytes: bytes) -> str:
     """Performs OCR on an image and returns the extracted text."""
@@ -27,29 +25,26 @@ def ocr_image(image_bytes: bytes) -> str:
         st.warning(f"OCR failed for an image: {e}")
         return ""
 
-
 # --- Text Extraction ---
 def extract_text_from_pdf(pdf_path: str, use_ocr: bool = True) -> str:
     import fitz  # PyMuPDF
     doc = fitz.open(pdf_path)
     text = ""
-    for page_num, page in enumerate(doc):
+    for page in doc:
         text += page.get_text()
         if use_ocr:
             image_list = page.get_images(full=True)
-            for _, img in enumerate(image_list):
-                xref = img[0]
+            for img_meta in image_list:
+                xref = img_meta[0]
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
                 text += ocr_image(image_bytes)
     return text
 
-
 def extract_text_from_docx(docx_path: str, use_ocr: bool = True) -> str:
     from docx import Document
     doc = Document(docx_path)
     text = "\n".join(para.text for para in doc.paragraphs)
-
     if use_ocr:
         for rel in doc.part.rels.values():
             if "image" in rel.target_ref:
@@ -57,18 +52,17 @@ def extract_text_from_docx(docx_path: str, use_ocr: bool = True) -> str:
                 text += ocr_image(image_bytes)
     return text
 
-
 def extract_text_from_txt(txt_path: str) -> str:
     with open(txt_path, "r", encoding="utf-8") as f:
         return f.read()
 
-
 def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile], use_ocr: bool) -> List[Tuple[str, str]]:
-    """Extracts text from uploaded files."""
-    extracted_texts = []
+    """Extracts text from uploaded files and returns list of (filename, text)."""
+    extracted_texts: List[Tuple[str, str]] = []
     for uploaded_file in uploaded_files:
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmpfile:
+            suffix = f".{uploaded_file.name.split('.')[-1]}"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmpfile:
                 tmpfile.write(uploaded_file.getvalue())
                 tmp_path = tmpfile.name
 
@@ -81,6 +75,7 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
                 text = extract_text_from_txt(tmp_path)
             else:
                 st.warning(f"Unsupported file type: {uploaded_file.name}")
+                os.remove(tmp_path)
                 continue
 
             if text and text.strip():
@@ -95,7 +90,6 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
 
     return extracted_texts
 
-
 # --- VectorDB Builder ---
 def build_vectordb(chunks):
     embeddings = HuggingFaceEmbeddings(
@@ -104,10 +98,10 @@ def build_vectordb(chunks):
     )
     return FAISS.from_documents(chunks, embeddings)
 
-
 # --- Modern LangChain QA System ---
 class DocumentQA:
     def __init__(self, texts: List[Tuple[str, str]]):
+        # texts: list of (filename, full_text)
         self.documents = [Document(page_content=text, metadata={"source": source}) for source, text in texts]
 
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
@@ -132,6 +126,7 @@ Answer:"""
         )
 
     def add_documents(self, texts: List[Tuple[str, str]]):
+        """Add new (filename, text) pairs to the system."""
         new_docs = [Document(page_content=text, metadata={"source": source}) for source, text in texts]
         self.documents.extend(new_docs)
 
@@ -139,7 +134,12 @@ Answer:"""
         new_chunks = splitter.split_documents(new_docs)
         self.chunks.extend(new_chunks)
 
-        self.vectordb.add_documents(new_chunks)
+        # FAISS (langchain) supports add_documents
+        try:
+            self.vectordb.add_documents(new_chunks)
+        except Exception as e:
+            # If adding fails for any reason, rebuild from full chunk set
+            raise RuntimeError(f"Failed to add documents to vectordb: {e}")
 
     def answer_question(self, question: str) -> str:
         trigger_phrases = ["all documents", "uploaded docs", "both files", "both documents"]
@@ -168,6 +168,17 @@ Answer:"""
                 summaries.append(f"### {doc.metadata['source']}\n(Summarization failed: {e})")
         return "\n\n".join(summaries)
 
+# --- Helpers ---
+def rebuild_qa_from_stored():
+    """Rebuild the QA system from st.session_state['stored_texts'] (list of (name,text))."""
+    stored = st.session_state.get("stored_texts", [])
+    if not stored:
+        return None
+    try:
+        return DocumentQA(stored)
+    except Exception as e:
+        st.error(f"Failed to build QA system from stored texts: {e}")
+        return None
 
 # --- Streamlit Interface ---
 st.set_page_config(page_title="Multimodal Document Q&A Assistant", page_icon="📄", layout="wide")
@@ -189,13 +200,25 @@ if not groq_api_key:
 
 os.environ["GROQ_API_KEY"] = groq_api_key
 
-# --- Session-based State ---
+# --- Session-based State (initialize) ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "qa_system" not in st.session_state:
-    st.session_state.qa_system = None
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = set()
+if "stored_texts" not in st.session_state:
+    # list of (filename, text)
+    st.session_state.stored_texts = []
+if "qa_system" not in st.session_state:
+    st.session_state.qa_system = None
+
+# If qa_system exists but is an old object without add_documents, rebuild it automatically
+if st.session_state.qa_system is not None and not hasattr(st.session_state.qa_system, "add_documents"):
+    rebuilt = rebuild_qa_from_stored()
+    if rebuilt:
+        st.session_state.qa_system = rebuilt
+    else:
+        # clear it so we can rebuild later when text is available
+        st.session_state.qa_system = None
 
 # Sidebar: File Uploader + OCR toggle
 with st.sidebar:
@@ -206,16 +229,35 @@ with st.sidebar:
     )
 
     if uploaded_files:
+        # Only keep files that haven't been processed in this session
         new_files = [f for f in uploaded_files if f.name not in st.session_state.processed_files]
         if new_files:
             with st.spinner("Processing new documents..."):
                 try:
                     extracted_texts = get_text_from_files(new_files, use_ocr)
                     if extracted_texts:
-                        if st.session_state.qa_system is None:
-                            st.session_state.qa_system = DocumentQA(extracted_texts)
+                        # append to stored_texts (persisted list of (name, text))
+                        st.session_state.stored_texts.extend(extracted_texts)
+
+                        # If we don't have a qa_system or it's old, rebuild from stored_texts
+                        if st.session_state.qa_system is None or not hasattr(st.session_state.qa_system, "add_documents"):
+                            try:
+                                st.session_state.qa_system = DocumentQA(st.session_state.stored_texts)
+                            except Exception as e:
+                                st.error(f"Error building QA system: {e}")
+                                # don't try to add below if build failed
+                                st.session_state.qa_system = None
                         else:
-                            st.session_state.qa_system.add_documents(extracted_texts)
+                            # Safe to call add_documents — but guard and fallback to rebuild on failure
+                            try:
+                                st.session_state.qa_system.add_documents(extracted_texts)
+                            except Exception as e:
+                                st.warning("Adding documents to the existing QA system failed; rebuilding the QA system from all stored docs.")
+                                try:
+                                    st.session_state.qa_system = DocumentQA(st.session_state.stored_texts)
+                                except Exception as e2:
+                                    st.error(f"Rebuild failed: {e2}")
+                                    st.session_state.qa_system = None
 
                         for f in new_files:
                             st.session_state.processed_files.add(f.name)
@@ -229,22 +271,27 @@ with st.sidebar:
     st.divider()
     st.subheader("🗑️ New Chat")
     if st.button("Start New Chat"):
+        # Clears chat history and all stored documents & rebuild; use this when switching context
         st.session_state.messages = []
         st.session_state.qa_system = None
         st.session_state.processed_files = set()
-        st.success("New chat started!")
+        st.session_state.stored_texts = []
+        st.success("New chat started! All uploaded documents and chat history cleared.")
 
-
-# Display chat history
+# Display chat messages from history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Main chat
+# Main chat interface
 if prompt := st.chat_input("Ask a question about your documents"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
+
+    # Ensure qa_system is present and current; attempt rebuild if missing but stored_texts exist
+    if st.session_state.qa_system is None and st.session_state.stored_texts:
+        st.session_state.qa_system = rebuild_qa_from_stored()
 
     if st.session_state.qa_system is not None:
         with st.spinner("Getting your answer..."):
