@@ -2,6 +2,7 @@ import os
 import tempfile
 from typing import List, Tuple
 import io
+import json
 
 import streamlit as st
 from langchain.schema import Document
@@ -13,32 +14,34 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from PIL import Image
 import pytesseract
+from supabase import create_client
+
+# --- Supabase Setup ---
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- OCR Function ---
 def ocr_image(image_bytes: bytes) -> str:
-    """Performs OCR on an image and returns the extracted text."""
     try:
         image = Image.open(io.BytesIO(image_bytes))
-        text = pytesseract.image_to_string(image)
-        return text
+        return pytesseract.image_to_string(image)
     except Exception as e:
         st.warning(f"OCR failed for an image: {e}")
         return ""
 
-# --- Text Extraction ---
+# --- Text Extraction Functions (same as before) ---
 def extract_text_from_pdf(pdf_path: str, use_ocr: bool = True) -> str:
-    import fitz  # PyMuPDF
+    import fitz
     doc = fitz.open(pdf_path)
     text = ""
     for page in doc:
         text += page.get_text()
         if use_ocr:
-            image_list = page.get_images(full=True)
-            for img_meta in image_list:
+            for img_meta in page.get_images(full=True):
                 xref = img_meta[0]
                 base_image = doc.extract_image(xref)
-                image_bytes = base_image["image"]
-                text += ocr_image(image_bytes)
+                text += ocr_image(base_image["image"])
     return text
 
 def extract_text_from_docx(docx_path: str, use_ocr: bool = True) -> str:
@@ -48,8 +51,7 @@ def extract_text_from_docx(docx_path: str, use_ocr: bool = True) -> str:
     if use_ocr:
         for rel in doc.part.rels.values():
             if "image" in rel.target_ref:
-                image_bytes = rel.target_part.blob
-                text += ocr_image(image_bytes)
+                text += ocr_image(rel.target_part.blob)
     return text
 
 def extract_text_from_txt(txt_path: str) -> str:
@@ -57,8 +59,7 @@ def extract_text_from_txt(txt_path: str) -> str:
         return f.read()
 
 def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile], use_ocr: bool) -> List[Tuple[str, str]]:
-    """Extracts text from uploaded files and returns list of (filename, text)."""
-    extracted_texts: List[Tuple[str, str]] = []
+    extracted_texts = []
     for uploaded_file in uploaded_files:
         try:
             suffix = f".{uploaded_file.name.split('.')[-1]}"
@@ -66,58 +67,40 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
                 tmpfile.write(uploaded_file.getvalue())
                 tmp_path = tmpfile.name
 
-            file_extension = os.path.splitext(uploaded_file.name)[1].lower()
-            if file_extension == ".pdf":
+            ext = os.path.splitext(uploaded_file.name)[1].lower()
+            if ext == ".pdf":
                 text = extract_text_from_pdf(tmp_path, use_ocr)
-            elif file_extension == ".docx":
+            elif ext == ".docx":
                 text = extract_text_from_docx(tmp_path, use_ocr)
-            elif file_extension == ".txt":
+            elif ext == ".txt":
                 text = extract_text_from_txt(tmp_path)
             else:
                 st.warning(f"Unsupported file type: {uploaded_file.name}")
-                os.remove(tmp_path)
                 continue
 
-            if text and text.strip():
+            if text.strip():
                 extracted_texts.append((uploaded_file.name, text))
-            else:
-                st.warning(f"No text could be extracted from {uploaded_file.name}")
-
             os.remove(tmp_path)
-
         except Exception as e:
             st.error(f"Error processing {uploaded_file.name}: {e}")
-
     return extracted_texts
 
 # --- VectorDB Builder ---
 def build_vectordb(chunks):
-    embeddings = HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2",
-        encode_kwargs={"batch_size": 32}
-    )
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2", encode_kwargs={"batch_size": 32})
     return FAISS.from_documents(chunks, embeddings)
 
-# --- Modern LangChain QA System ---
+# --- QA System ---
 class DocumentQA:
     def __init__(self, texts: List[Tuple[str, str]]):
-        # texts: list of (filename, full_text)
-        self.documents = [Document(page_content=text, metadata={"source": source}) for source, text in texts]
-
+        self.documents = [Document(page_content=text, metadata={"source": src}) for src, text in texts]
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         self.chunks = splitter.split_documents(self.documents)
-
-        if not self.chunks:
-            raise ValueError("Text splitting produced no chunks.")
-
         self.vectordb = build_vectordb(self.chunks)
         self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
-
         self.prompt_template = PromptTemplate(
             input_variables=["context", "question"],
-            template="""Use the following pieces of context to answer the question at the end.
-If you don't know the answer, just say that you don't know, don't try to make up an answer.
-
+            template="""Use the following pieces of context to answer the question:
 Context: {context}
 
 Question: {question}
@@ -126,184 +109,82 @@ Answer:"""
         )
 
     def add_documents(self, texts: List[Tuple[str, str]]):
-        """Add new (filename, text) pairs to the system."""
-        new_docs = [Document(page_content=text, metadata={"source": source}) for source, text in texts]
+        new_docs = [Document(page_content=text, metadata={"source": src}) for src, text in texts]
         self.documents.extend(new_docs)
-
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         new_chunks = splitter.split_documents(new_docs)
         self.chunks.extend(new_chunks)
+        self.vectordb.add_documents(new_chunks)
 
-        # FAISS (langchain) supports add_documents
-        try:
-            self.vectordb.add_documents(new_chunks)
-        except Exception as e:
-            # If adding fails for any reason, rebuild from full chunk set
-            raise RuntimeError(f"Failed to add documents to vectordb: {e}")
-
-    def answer_question(self, question: str) -> str:
-        trigger_phrases = ["all documents", "uploaded docs", "both files", "both documents"]
-        if any(phrase in question.lower() for phrase in trigger_phrases):
-            return self.summarize_all_documents()
-
-        relevant_docs = self.vectordb.similarity_search(question, k=3)
-        context = "\n\n".join(
-            [f"Source: {doc.metadata.get('source','unknown')}\n{doc.page_content}" for doc in relevant_docs]
-        )
-
+    def answer_question(self, q: str) -> str:
+        docs = self.vectordb.similarity_search(q, k=3)
+        context = "\n\n".join([f"Source: {d.metadata['source']}\n{d.page_content}" for d in docs])
         chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
-        return chain.run(context=context, question=question)
+        return chain.run(context=context, question=q)
 
-    def summarize_all_documents(self) -> str:
-        summaries = []
-        for doc in self.documents:
-            try:
-                summary = self.llm.predict(
-                    f"Summarize the document '{doc.metadata['source']}' in 5 bullet points. "
-                    f"Clearly state what kind of document it is (e.g., CV, research paper, report). "
-                    f"Here is the content:\n\n{doc.page_content}"
-                )
-                summaries.append(f"### {doc.metadata['source']}\n{summary}")
-            except Exception as e:
-                summaries.append(f"### {doc.metadata['source']}\n(Summarization failed: {e})")
-        return "\n\n".join(summaries)
+# --- Chat History Save/Load ---
+def save_chat(user_id, messages):
+    supabase.table("chats").upsert({
+        "user_id": user_id,
+        "messages": messages
+    }).execute()
 
-# --- Helpers ---
-def rebuild_qa_from_stored():
-    """Rebuild the QA system from st.session_state['stored_texts'] (list of (name,text))."""
-    stored = st.session_state.get("stored_texts", [])
-    if not stored:
-        return None
-    try:
-        return DocumentQA(stored)
-    except Exception as e:
-        st.error(f"Failed to build QA system from stored texts: {e}")
-        return None
+def load_chat(user_id):
+    res = supabase.table("chats").select("messages").eq("user_id", user_id).execute()
+    return res.data[0]["messages"] if res.data else []
 
 # --- Streamlit Interface ---
-st.set_page_config(page_title="Multimodal Document Q&A Assistant", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Document Q&A with Login", page_icon="🔑", layout="wide")
+st.title("🔑 Document Q&A Assistant with Login")
 
-st.title("📄 Multimodal Document Q&A Assistant")
-st.markdown("Upload your documents (PDF, DOCX, TXT) and ask questions. "
-            "This app uses OCR (optional) to extract text from images in your documents. Powered by Llama 3.3 70B via Groq.")
-
-# API Key Management
-groq_api_key = os.environ.get("GROQ_API_KEY")
-if not groq_api_key:
-    with st.sidebar:
-        groq_api_key = st.text_input("Enter your Groq API Key:", type="password", key="api_key_input")
-        st.markdown("[Get your Groq API key here](https://console.groq.com/keys)")
-
-if not groq_api_key:
-    st.warning("Please enter your Groq API key in the sidebar to continue.")
+# OAuth Login (new Streamlit built-in)
+if not st.user.is_logged_in:
+    st.login("google")
     st.stop()
+else:
+    st.sidebar.success(f"Logged in as {st.user.email}")
+    if st.button("Logout"):
+        st.logout()
+        st.stop()
 
-os.environ["GROQ_API_KEY"] = groq_api_key
+user_id = st.user.id  # unique Supabase UUID
 
-# --- Session-based State (initialize) ---
+# Load chat history from Supabase
 if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "processed_files" not in st.session_state:
-    st.session_state.processed_files = set()
-if "stored_texts" not in st.session_state:
-    # list of (filename, text)
-    st.session_state.stored_texts = []
-if "qa_system" not in st.session_state:
-    st.session_state.qa_system = None
+    st.session_state.messages = load_chat(user_id)
 
-# If qa_system exists but is an old object without add_documents, rebuild it automatically
-if st.session_state.qa_system is not None and not hasattr(st.session_state.qa_system, "add_documents"):
-    rebuilt = rebuild_qa_from_stored()
-    if rebuilt:
-        st.session_state.qa_system = rebuilt
-    else:
-        # clear it so we can rebuild later when text is available
-        st.session_state.qa_system = None
-
-# Sidebar: File Uploader + OCR toggle
+# Upload & Process Files
 with st.sidebar:
-    st.header("Upload Your Documents")
-    use_ocr = st.checkbox("Enable OCR for images", value=True)
-    uploaded_files = st.file_uploader(
-        "Upload your documents", type=["pdf", "docx", "txt"], accept_multiple_files=True
-    )
+    st.header("Upload Documents")
+    use_ocr = st.checkbox("Enable OCR", True)
+    files = st.file_uploader("Upload", type=["pdf","docx","txt"], accept_multiple_files=True)
+    if "qa" not in st.session_state: st.session_state.qa = None
+    if files:
+        texts = get_text_from_files(files, use_ocr)
+        if texts:
+            if st.session_state.qa is None:
+                st.session_state.qa = DocumentQA(texts)
+            else:
+                st.session_state.qa.add_documents(texts)
+            st.success(f"Added {len(texts)} docs.")
 
-    if uploaded_files:
-        # Only keep files that haven't been processed in this session
-        new_files = [f for f in uploaded_files if f.name not in st.session_state.processed_files]
-        if new_files:
-            with st.spinner("Processing new documents..."):
-                try:
-                    extracted_texts = get_text_from_files(new_files, use_ocr)
-                    if extracted_texts:
-                        # append to stored_texts (persisted list of (name, text))
-                        st.session_state.stored_texts.extend(extracted_texts)
+# Chat Display
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-                        # If we don't have a qa_system or it's old, rebuild from stored_texts
-                        if st.session_state.qa_system is None or not hasattr(st.session_state.qa_system, "add_documents"):
-                            try:
-                                st.session_state.qa_system = DocumentQA(st.session_state.stored_texts)
-                            except Exception as e:
-                                st.error(f"Error building QA system: {e}")
-                                # don't try to add below if build failed
-                                st.session_state.qa_system = None
-                        else:
-                            # Safe to call add_documents — but guard and fallback to rebuild on failure
-                            try:
-                                st.session_state.qa_system.add_documents(extracted_texts)
-                            except Exception as e:
-                                st.warning("Adding documents to the existing QA system failed; rebuilding the QA system from all stored docs.")
-                                try:
-                                    st.session_state.qa_system = DocumentQA(st.session_state.stored_texts)
-                                except Exception as e2:
-                                    st.error(f"Rebuild failed: {e2}")
-                                    st.session_state.qa_system = None
-
-                        for f in new_files:
-                            st.session_state.processed_files.add(f.name)
-
-                        st.success(f"Successfully added {len(extracted_texts)} new documents!")
-                    else:
-                        st.error("No text extracted from new documents.")
-                except Exception as e:
-                    st.error(f"Error processing documents: {e}")
-
-    st.divider()
-    st.subheader("🗑️ New Chat")
-    if st.button("Start New Chat"):
-        # Clears chat history and all stored documents & rebuild; use this when switching context
-        st.session_state.messages = []
-        st.session_state.qa_system = None
-        st.session_state.processed_files = set()
-        st.session_state.stored_texts = []
-        st.success("New chat started! All uploaded documents and chat history cleared.")
-
-# Display chat messages from history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# Main chat interface
-if prompt := st.chat_input("Ask a question about your documents"):
+# Chat Input
+if prompt := st.chat_input("Ask about your docs..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    # Ensure qa_system is present and current; attempt rebuild if missing but stored_texts exist
-    if st.session_state.qa_system is None and st.session_state.stored_texts:
-        st.session_state.qa_system = rebuild_qa_from_stored()
-
-    if st.session_state.qa_system is not None:
-        with st.spinner("Getting your answer..."):
-            try:
-                result = st.session_state.qa_system.answer_question(prompt)
-                with st.chat_message("assistant"):
-                    st.markdown(result)
-                st.session_state.messages.append({"role": "assistant", "content": result})
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
+    with st.chat_message("user"): st.markdown(prompt)
+    if st.session_state.qa:
+        with st.spinner("Thinking..."):
+            ans = st.session_state.qa.answer_question(prompt)
+            st.session_state.messages.append({"role": "assistant", "content": ans})
+            with st.chat_message("assistant"): st.markdown(ans)
+            save_chat(user_id, st.session_state.messages)
     else:
         with st.chat_message("assistant"):
-            message = "Please upload at least one document first to start asking questions."
-            st.markdown(message)
-        st.session_state.messages.append({"role": "assistant", "content": message})
+            msg = "Please upload docs first!"
+            st.markdown(msg)
+            st.session_state.messages.append({"role": "assistant", "content": msg})
