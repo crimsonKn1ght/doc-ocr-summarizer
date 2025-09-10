@@ -17,8 +17,16 @@ import pytesseract
 from supabase import create_client
 
 # --- Supabase Setup ---
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+SUPABASE_URL = st.secrets.get("SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
+
+st.write("Supabase URL loaded:", bool(SUPABASE_URL))
+st.write("Supabase Key loaded:", bool(SUPABASE_KEY))
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error("❌ Missing Supabase credentials. Please set SUPABASE_URL and SUPABASE_KEY in Streamlit Cloud → Settings → Secrets")
+    st.stop()
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- OCR Function ---
@@ -30,7 +38,7 @@ def ocr_image(image_bytes: bytes) -> str:
         st.warning(f"OCR failed for an image: {e}")
         return ""
 
-# --- Text Extraction Functions (same as before) ---
+# --- Text Extraction ---
 def extract_text_from_pdf(pdf_path: str, use_ocr: bool = True) -> str:
     import fitz
     doc = fitz.open(pdf_path)
@@ -135,21 +143,12 @@ def load_chat(user_id):
 
 # --- Streamlit Interface ---
 st.set_page_config(page_title="Document Q&A with Login", page_icon="🔑", layout="wide")
-st.title("🔑 Document Q&A Assistant with Login")
+st.title("🔑 Document Q&A Assistant with Supabase")
 
-# OAuth Login (new Streamlit built-in)
-if not st.user.is_logged_in:
-    st.login("google")
-    st.stop()
-else:
-    st.sidebar.success(f"Logged in as {st.user.email}")
-    if st.button("Logout"):
-        st.logout()
-        st.stop()
+# For demo: simple user_id placeholder until Supabase OAuth flow is wired
+user_id = "demo-user"   # later: replace with actual Supabase user ID
 
-user_id = st.user.id  # unique Supabase UUID
-
-# Load chat history from Supabase
+# Load chat history
 if "messages" not in st.session_state:
     st.session_state.messages = load_chat(user_id)
 
