@@ -37,12 +37,11 @@ def ocr_image(image_bytes: bytes) -> str:
     try:
         image = Image.open(io.BytesIO(image_bytes))
         return pytesseract.image_to_string(image)
-    except Exception as e:
-        st.warning(f"OCR failed: {e}")
+    except Exception:
         return ""
 
 def extract_text_from_pdf(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
-    import fitz  # PyMuPDF
+    import fitz
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     text = ""
     for page in doc:
@@ -126,7 +125,7 @@ Answer:"""
 
     def add_file(self, filename: str, content: str, file_hash: str, file_size: int):
         if file_hash in self.processed_files:
-            return False, f"File '{filename}' already processed (duplicate content detected)"
+            return False, f"File '{filename}' already processed (duplicate content)"
         doc = Document(page_content=content, metadata={
             "source": filename,
             "file_hash": file_hash,
@@ -135,10 +134,9 @@ Answer:"""
         self.documents.append(doc)
         self.processed_files[file_hash] = {
             "name": filename,
-            "size": file_size,
-            "processed_time": str(st.session_state.get('current_time', 'unknown'))
+            "size": file_size
         }
-        return True, f"Successfully processed '{filename}'"
+        return True, f"Processed '{filename}'"
 
     def _rebuild_vectordb(self):
         if not self.documents:
@@ -152,7 +150,7 @@ Answer:"""
             _ = self.embeddings.embed_documents(all_texts)
             self.vectordb = FAISS.from_documents(chunks, self.embeddings)
         except Exception as e:
-            st.error(f"Failed to build vector database: {e}")
+            st.error(f"Failed to build vector DB: {e}")
             self.vectordb = None
 
     def answer_question(self, question: str) -> str:
@@ -170,26 +168,7 @@ Answer:"""
         except Exception as e:
             return f"Error: {str(e)}"
 
-    def get_document_list(self):
-        return [(doc.metadata['source'], doc.metadata.get('file_size', 0)) for doc in self.documents]
-
-    def remove_file(self, filename: str):
-        self.documents = [doc for doc in self.documents if doc.metadata['source'] != filename]
-        file_hash_to_remove = None
-        for file_hash, file_info in self.processed_files.items():
-            if file_info['name'] == filename:
-                file_hash_to_remove = file_hash
-                break
-        if file_hash_to_remove:
-            del self.processed_files[file_hash_to_remove]
-        self._rebuild_vectordb() if self.documents else setattr(self, 'vectordb', None)
-
-    def clear_all(self):
-        self.documents = []
-        self.processed_files = {}
-        self.vectordb = None
-
-# ----------------- CHAT HANDLING ----------------- #
+# ----------------- CHAT & CONVERSATIONS ----------------- #
 def save_chat(user_id, conv_id, messages):
     if not supabase or not user_id: return
     supabase.table("conversations").upsert({
@@ -200,25 +179,29 @@ def save_chat(user_id, conv_id, messages):
 
 def load_chat(user_id, conv_id):
     if not supabase or not user_id: return []
-    res = supabase.table("conversations").select("messages").eq("user_id", user_id).eq("conversation_id", conv_id).execute()
+    res = supabase.table("conversations").select("messages")\
+        .eq("user_id", user_id).eq("conversation_id", conv_id).execute()
     if res.data and len(res.data) > 0:
         return json.loads(res.data[0]["messages"])
     return []
 
 def list_conversations(user_id):
     if not supabase or not user_id: return []
-    res = supabase.table("conversations").select("conversation_id").eq("user_id", user_id).execute()
+    res = supabase.table("conversations").select("conversation_id")\
+        .eq("user_id", user_id).execute()
     return [c["conversation_id"] for c in res.data] if res.data else []
 
 # ----------------- SESSION STATE ----------------- #
 if "doc_manager" not in st.session_state:
     st.session_state.doc_manager = DocumentManager()
-
 if "staged_files" not in st.session_state:
     st.session_state.staged_files = []
-
 if "user" not in st.session_state:
     st.session_state.user = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "conv_id" not in st.session_state:
+    st.session_state.conv_id = str(uuid.uuid4())
 
 # ----------------- LOGIN ----------------- #
 query_params = st.query_params
@@ -231,20 +214,20 @@ elif "code" in query_params and st.session_state.user is None:
         st.query_params.clear()
         st.rerun()
     except Exception:
-        st.error("Could not log you in. Please try again later.")
+        st.error("Could not log you in. Please try again.")
 
 user = st.session_state.user
 
+# ----------------- ANONYMOUS OR LOGGED-IN ----------------- #
 if not user:
-    # Show login card
-    st.markdown("""
+    login_url = f"{SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to={REDIRECT_URL}"
+    st.markdown(f"""
     <div style="display:flex; justify-content:center; align-items:center; height:80vh;">
       <div style="text-align:center; padding:2rem; border-radius:1rem; box-shadow:0 4px 12px rgba(0,0,0,0.1); background:white; max-width:400px;">
         <h2>👋 Welcome to DocQ&A</h2>
         <p>Sign in to save your chats and documents</p>
         <a href="{login_url}">
           <button style="padding:0.8rem 1.5rem; border:none; border-radius:0.5rem; background:#4285F4; color:white; font-size:1rem; cursor:pointer;">
-            <img src="https://www.svgrepo.com/show/475656/google-color.svg" width="20" style="vertical-align:middle; margin-right:8px;"/>
             Sign in with Google
           </button>
         </a>
@@ -252,31 +235,11 @@ if not user:
     </div>
     """, unsafe_allow_html=True)
 else:
-    # ----------------- MAIN APP ----------------- #
     st.sidebar.success(f"Logged in as {user.email}")
     if st.sidebar.button("Logout"):
         st.session_state.pop("user")
         st.session_state.pop("messages", None)
         st.rerun()
-
-    # Conversation management
-    if "conv_id" not in st.session_state:
-        # Create new conversation by default
-        st.session_state.conv_id = str(uuid.uuid4())
-        if user:
-            st.session_state.messages = []
-
-    # Sidebar: list previous conversations
-    if user:
-        convs = list_conversations(user.id)
-        st.sidebar.subheader("💬 Conversations")
-        for c in convs:
-            if st.sidebar.button(f"Conversation {c[:6]}", key=c):
-                st.session_state.conv_id = c
-                st.session_state.messages = load_chat(user.id, c)
-        if st.sidebar.button("➕ New Conversation"):
-            st.session_state.conv_id = str(uuid.uuid4())
-            st.session_state.messages = []
 
     # ----------------- DOCUMENT UPLOAD ----------------- #
     st.sidebar.subheader("📂 Upload Documents")
@@ -300,9 +263,7 @@ else:
     st.session_state.doc_manager._rebuild_vectordb()
 
     # ----------------- CHAT ----------------- #
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
+    conv_id = st.session_state.conv_id
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -310,11 +271,7 @@ else:
     if prompt := st.chat_input("Ask me about your documents..."):
         st.session_state.messages.append({"role":"user","content":prompt})
         with st.chat_message("user"): st.markdown(prompt)
-
-        # Real answer
         answer = st.session_state.doc_manager.answer_question(prompt)
         st.session_state.messages.append({"role":"assistant","content":answer})
         with st.chat_message("assistant"): st.markdown(answer)
-
-        if user:
-            save_chat(user.id, st.session_state.conv_id, st.session_state.messages)
+        save_chat(user.id, conv_id, st.session_state.messages)
