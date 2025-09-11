@@ -2,7 +2,6 @@ import os
 import tempfile
 from typing import List, Tuple
 import io
-import json
 
 import streamlit as st
 from langchain.schema import Document
@@ -16,45 +15,37 @@ from PIL import Image
 import pytesseract
 from supabase import create_client
 
+# --- Streamlit Page Config ---
+st.set_page_config(page_title="DocQ&A", page_icon="📄", layout="wide")
+
 # --- Supabase Setup ---
 SUPABASE_URL = st.secrets.get("SUPABASE_URL")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
+REDIRECT_URL = st.secrets.get("REDIRECT_URL")  # must be your deployed Streamlit URL
 
-st.write("Supabase URL loaded:", bool(SUPABASE_URL))
-st.write("Supabase Key loaded:", bool(SUPABASE_KEY))
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("❌ Missing Supabase credentials. Please set SUPABASE_URL and SUPABASE_KEY in Streamlit Cloud → Settings → Secrets")
-    st.stop()
-
-try:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    st.success("✅ Supabase client initialized successfully")
-except Exception as e:
-    st.error(f"❌ Failed to init Supabase client: {type(e).__name__} - {e}")
-    st.stop()
-
-# --- Auth Section ---
+# --- OAuth Login Handling ---
 st.sidebar.header("Login")
 
-# OAuth login URL (Google)
-login_url = f"{SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to={st.secrets.get('REDIRECT_URL')}"
+login_url = f"{SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to={REDIRECT_URL}"
 
-if "session" not in st.session_state:
-    st.session_state.session = None
+query_params = st.experimental_get_query_params()
+access_token = query_params.get("access_token", [None])[0]
+refresh_token = query_params.get("refresh_token", [None])[0]
 
-# If not logged in, show login button
-if not st.session_state.session:
-    st.sidebar.markdown(f"[🔑 Login with Google]({login_url})")
-    st.stop()
+if access_token and refresh_token:
+    session = supabase.auth.set_session(
+        {"access_token": access_token, "refresh_token": refresh_token}
+    )
+    st.session_state.session = session
 
-# If logged in, extract user id
-session = supabase.auth.get_session()
-if session and session.user:
-    user_id = session.user.id   # UUID of logged-in user
-    st.sidebar.success(f"Logged in as {session.user.email}")
+if "session" in st.session_state and st.session_state.session and st.session_state.session.user:
+    user = st.session_state.session.user
+    user_id = user.id
+    st.sidebar.success(f"✅ Logged in as {user.email}")
 else:
-    st.sidebar.error("Not logged in")
+    st.sidebar.markdown(f"[🔑 Login with Google]({login_url})")
     st.stop()
 
 # --- OCR Function ---
@@ -94,7 +85,7 @@ def extract_text_from_txt(txt_path: str) -> str:
     with open(txt_path, "r", encoding="utf-8") as f:
         return f.read()
 
-def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile], use_ocr: bool) -> List[Tuple[str, str]]:
+def get_text_from_files(uploaded_files, use_ocr: bool) -> List[Tuple[str, str]]:
     extracted_texts = []
     for uploaded_file in uploaded_files:
         try:
@@ -123,7 +114,9 @@ def get_text_from_files(uploaded_files: List[st.runtime.uploaded_file_manager.Up
 
 # --- VectorDB Builder ---
 def build_vectordb(chunks):
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2", encode_kwargs={"batch_size": 32})
+    embeddings = HuggingFaceEmbeddings(
+        model_name="all-MiniLM-L6-v2", encode_kwargs={"batch_size": 32}
+    )
     return FAISS.from_documents(chunks, embeddings)
 
 # --- QA System ---
@@ -136,19 +129,22 @@ class DocumentQA:
         self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
         self.prompt_template = PromptTemplate(
             input_variables=["context", "question"],
-            template="""Use the following pieces of context to answer the question:
-Context: {context}
+            template="""Use the following context to answer the question:
 
-Question: {question}
+Context:
+{context}
+
+Question:
+{question}
 
 Answer:"""
         )
 
     def add_documents(self, texts: List[Tuple[str, str]]):
         new_docs = [Document(page_content=text, metadata={"source": src}) for src, text in texts]
-        self.documents.extend(new_docs)
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         new_chunks = splitter.split_documents(new_docs)
+        self.documents.extend(new_docs)
         self.chunks.extend(new_chunks)
         self.vectordb.add_documents(new_chunks)
 
@@ -158,31 +154,28 @@ Answer:"""
         chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
         return chain.run(context=context, question=q)
 
-# --- Chat History Save/Load ---
+# --- Chat History Persistence ---
 def save_chat(user_id, messages):
-    supabase.table("chats").upsert({
-        "user_id": user_id,
-        "messages": messages
-    }).execute()
+    supabase.table("chats").upsert({"user_id": user_id, "messages": messages}).execute()
 
 def load_chat(user_id):
     res = supabase.table("chats").select("messages").eq("user_id", user_id).execute()
     return res.data[0]["messages"] if res.data else []
 
-# --- Streamlit Interface ---
-st.set_page_config(page_title="Document Q&A with Login", page_icon="🔑", layout="wide")
-st.title("🔑 Document Q&A Assistant with Supabase")
+# --- Main Interface ---
+st.title("📄 DocQ&A – Your AI Assistant")
 
 # Load chat history
 if "messages" not in st.session_state:
     st.session_state.messages = load_chat(user_id)
 
-# Upload & Process Files
+# Sidebar: Upload docs
 with st.sidebar:
-    st.header("Upload Documents")
+    st.header("📂 Upload Documents")
     use_ocr = st.checkbox("Enable OCR", True)
     files = st.file_uploader("Upload", type=["pdf","docx","txt"], accept_multiple_files=True)
-    if "qa" not in st.session_state: st.session_state.qa = None
+    if "qa" not in st.session_state:
+        st.session_state.qa = None
     if files:
         texts = get_text_from_files(files, use_ocr)
         if texts:
@@ -190,25 +183,27 @@ with st.sidebar:
                 st.session_state.qa = DocumentQA(texts)
             else:
                 st.session_state.qa.add_documents(texts)
-            st.success(f"Added {len(texts)} docs.")
+            st.success(f"✅ Added {len(texts)} docs.")
 
-# Chat Display
+# Chat UI
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Chat Input
-if prompt := st.chat_input("Ask about your docs..."):
+if prompt := st.chat_input("Ask me about your documents..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"): st.markdown(prompt)
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
     if st.session_state.qa:
         with st.spinner("Thinking..."):
             ans = st.session_state.qa.answer_question(prompt)
             st.session_state.messages.append({"role": "assistant", "content": ans})
-            with st.chat_message("assistant"): st.markdown(ans)
+            with st.chat_message("assistant"):
+                st.markdown(ans)
             save_chat(user_id, st.session_state.messages)
     else:
         with st.chat_message("assistant"):
-            msg = "Please upload docs first!"
+            msg = "📂 Please upload documents first!"
             st.markdown(msg)
             st.session_state.messages.append({"role": "assistant", "content": msg})
