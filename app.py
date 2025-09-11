@@ -1,7 +1,6 @@
 import os
-import tempfile
-from typing import List, Tuple
 import io
+from typing import List, Tuple
 
 import streamlit as st
 from langchain.schema import Document
@@ -69,9 +68,9 @@ def ocr_image(image_bytes: bytes) -> str:
         return ""
 
 # --- Text Extraction ---
-def extract_text_from_pdf(pdf_path: str, use_ocr: bool = True) -> str:
-    import fitz
-    doc = fitz.open(pdf_path)
+def extract_text_from_pdf(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
+    import fitz  # PyMuPDF
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
     text = ""
     for page in doc:
         text += page.get_text()
@@ -82,9 +81,9 @@ def extract_text_from_pdf(pdf_path: str, use_ocr: bool = True) -> str:
                 text += ocr_image(base_image["image"])
     return text
 
-def extract_text_from_docx(docx_path: str, use_ocr: bool = True) -> str:
+def extract_text_from_docx(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
     from docx import Document
-    doc = Document(docx_path)
+    doc = Document(file_bytes)
     text = "\n".join(para.text for para in doc.paragraphs)
     if use_ocr:
         for rel in doc.part.rels.values():
@@ -92,33 +91,29 @@ def extract_text_from_docx(docx_path: str, use_ocr: bool = True) -> str:
                 text += ocr_image(rel.target_part.blob)
     return text
 
-def extract_text_from_txt(txt_path: str) -> str:
-    with open(txt_path, "r", encoding="utf-8") as f:
-        return f.read()
+def extract_text_from_txt(file_bytes: io.BytesIO) -> str:
+    return file_bytes.read().decode("utf-8")
 
 def get_text_from_files(uploaded_files, use_ocr: bool) -> List[Tuple[str, str]]:
     extracted_texts = []
     for uploaded_file in uploaded_files:
         try:
-            suffix = f".{uploaded_file.name.split('.')[-1]}"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmpfile:
-                tmpfile.write(uploaded_file.getvalue())
-                tmp_path = tmpfile.name
-
             ext = os.path.splitext(uploaded_file.name)[1].lower()
+            file_bytes = io.BytesIO(uploaded_file.getvalue())
+
             if ext == ".pdf":
-                text = extract_text_from_pdf(tmp_path, use_ocr)
+                text = extract_text_from_pdf(file_bytes, use_ocr)
             elif ext == ".docx":
-                text = extract_text_from_docx(tmp_path, use_ocr)
+                text = extract_text_from_docx(file_bytes, use_ocr)
             elif ext == ".txt":
-                text = extract_text_from_txt(tmp_path)
+                text = extract_text_from_txt(file_bytes)
             else:
                 st.warning(f"Unsupported file type: {uploaded_file.name}")
                 continue
 
             if text.strip():
                 extracted_texts.append((uploaded_file.name, text))
-            os.remove(tmp_path)
+
         except Exception as e:
             st.error(f"Error processing {uploaded_file.name}: {e}")
     return extracted_texts
