@@ -31,8 +31,8 @@ st.sidebar.header("Login")
 login_url = f"{SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to={REDIRECT_URL}"
 
 query_params = st.query_params
-access_token = query_params.get("access_token", None)
-refresh_token = query_params.get("refresh_token", None)
+access_token = query_params.get("access_token")
+refresh_token = query_params.get("refresh_token")
 
 if access_token and refresh_token:
     session = supabase.auth.set_session(
@@ -40,7 +40,13 @@ if access_token and refresh_token:
     )
     st.session_state.session = session
 
-if "session" in st.session_state and st.session_state.session and st.session_state.session.user:
+logged_in = (
+    "session" in st.session_state
+    and st.session_state.session
+    and st.session_state.session.user
+)
+
+if logged_in:
     user = st.session_state.session.user
     user_id = user.id
     st.sidebar.success(f"✅ Logged in as {user.email}")
@@ -51,7 +57,7 @@ if "session" in st.session_state and st.session_state.session and st.session_sta
         st.rerun()
 else:
     st.sidebar.markdown(f"[🔑 Login with Google]({login_url})")
-    st.stop()
+    user_id = None  # no Supabase link
 
 # --- OCR Function ---
 def ocr_image(image_bytes: bytes) -> str:
@@ -161,11 +167,17 @@ Answer:"""
 
 # --- Chat History Persistence ---
 def save_chat(user_id, messages):
-    supabase.table("chats").upsert({"user_id": user_id, "messages": messages}).execute()
+    if user_id:
+        supabase.table("chats").upsert({"user_id": user_id, "messages": messages}).execute()
+    else:
+        st.session_state._local_messages = messages  # in-memory only
 
 def load_chat(user_id):
-    res = supabase.table("chats").select("messages").eq("user_id", user_id).execute()
-    return res.data[0]["messages"] if res.data else []
+    if user_id:
+        res = supabase.table("chats").select("messages").eq("user_id", user_id).execute()
+        return res.data[0]["messages"] if res.data else []
+    else:
+        return getattr(st.session_state, "_local_messages", [])
 
 # --- Main Interface ---
 st.title("📄 DocQ&A – Your AI Assistant")
