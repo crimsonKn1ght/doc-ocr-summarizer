@@ -1,6 +1,8 @@
 import os
 import io
 from typing import List, Tuple
+import hashlib
+import json
 
 import streamlit as st
 from langchain.schema import Document
@@ -54,7 +56,7 @@ if SUPABASE_URL and SUPABASE_KEY:
             st.query_params.clear()
             st.rerun()
     else:
-        st.sidebar.markdown(f"[🔒 Login with Google]({login_url})")
+        st.sidebar.markdown(f"[🔑 Login with Google]({login_url})")
         user_id = None
 else:
     st.sidebar.warning("⚠️ Supabase not configured")
@@ -95,6 +97,10 @@ def extract_text_from_docx(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
 
 def extract_text_from_txt(file_bytes: io.BytesIO) -> str:
     return file_bytes.read().decode("utf-8")
+
+def get_file_hash(file_content: bytes) -> str:
+    """Generate a unique hash for file content to avoid duplicates"""
+    return hashlib.md5(file_content).hexdigest()
 
 # --- Simple TF-IDF Embeddings ---
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -145,10 +151,11 @@ class TFIDFEmbeddings(Embeddings):
         else:
             return dense_vector[:self.dimension].tolist()
 
-# --- Document Manager ---
+# --- Enhanced Document Manager ---
 class DocumentManager:
     def __init__(self):
         self.documents = []
+        self.processed_files = {}  # Store file info: {file_hash: {name, size, processed_time}}
         self.embeddings = TFIDFEmbeddings()
         self.vectordb = None
         self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
@@ -164,13 +171,28 @@ Question: {question}
 Answer:"""
         )
     
-    def add_file(self, filename: str, content: str):
-        """Add a single file to the document collection"""
-        doc = Document(page_content=content, metadata={"source": filename})
+    def add_file(self, filename: str, content: str, file_hash: str, file_size: int):
+        """Add a single file to the document collection with duplicate checking"""
+        if file_hash in self.processed_files:
+            return False, f"File '{filename}' already processed (duplicate content detected)"
+        
+        doc = Document(page_content=content, metadata={
+            "source": filename,
+            "file_hash": file_hash,
+            "file_size": file_size
+        })
         self.documents.append(doc)
+        
+        # Store file info
+        self.processed_files[file_hash] = {
+            "name": filename,
+            "size": file_size,
+            "processed_time": str(st.session_state.get('current_time', 'unknown'))
+        }
         
         # Rebuild vector database with all documents
         self._rebuild_vectordb()
+        return True, f"Successfully processed '{filename}'"
     
     def _rebuild_vectordb(self):
         """Rebuild the vector database with all documents"""
@@ -214,10 +236,35 @@ Answer:"""
         return len(self.documents)
     
     def get_document_list(self):
-        return [doc.metadata['source'] for doc in self.documents]
+        return [(doc.metadata['source'], doc.metadata.get('file_size', 0)) for doc in self.documents]
+    
+    def get_processed_files_info(self):
+        return self.processed_files
+    
+    def remove_file(self, filename: str):
+        """Remove a specific file from the collection"""
+        # Find and remove documents with matching filename
+        self.documents = [doc for doc in self.documents if doc.metadata['source'] != filename]
+        
+        # Remove from processed files
+        file_hash_to_remove = None
+        for file_hash, file_info in self.processed_files.items():
+            if file_info['name'] == filename:
+                file_hash_to_remove = file_hash
+                break
+        
+        if file_hash_to_remove:
+            del self.processed_files[file_hash_to_remove]
+        
+        # Rebuild vector database
+        if self.documents:
+            self._rebuild_vectordb()
+        else:
+            self.vectordb = None
     
     def clear_all(self):
         self.documents = []
+        self.processed_files = {}
         self.vectordb = None
 
 # --- Chat Functions ---
@@ -245,6 +292,12 @@ if "doc_manager" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = load_chat(user_id)
 
+if "uploaded_files_session" not in st.session_state:
+    st.session_state.uploaded_files_session = []
+
+if "processing_status" not in st.session_state:
+    st.session_state.processing_status = {}
+
 # --- Main Interface ---
 st.title("📄 DocQ&A — Your AI Assistant")
 
@@ -252,22 +305,29 @@ st.title("📄 DocQ&A — Your AI Assistant")
 with st.sidebar:
     st.header("📂 Upload Documents")
     
-    # File upload section
+    # File upload section with unique key
     uploaded_files = st.file_uploader(
         "Choose files",
         type=["pdf", "docx", "txt"],
         accept_multiple_files=True,
-        key="multi_file_uploader"
+        key=f"file_uploader_{hash(str(st.session_state.get('upload_key', 0)))}"
     )
     
     use_ocr = st.checkbox("Enable OCR for images", True)
     
-    # Display uploaded files info
+    # Display currently uploaded files (in this session)
     if uploaded_files:
-        st.write(f"**Files selected:** {len(uploaded_files)}")
+        st.write(f"**Files selected for processing:** {len(uploaded_files)}")
         for i, file in enumerate(uploaded_files, 1):
             file_size_mb = file.size / (1024 * 1024)
-            st.write(f"{i}. {file.name} ({file_size_mb:.1f} MB)")
+            file_hash = get_file_hash(file.getvalue())
+            
+            # Check if already processed
+            already_processed = file_hash in st.session_state.doc_manager.processed_files
+            status_icon = "✅" if already_processed else "⏳"
+            status_text = " (already processed)" if already_processed else ""
+            
+            st.write(f"{status_icon} {i}. {file.name} ({file_size_mb:.1f} MB){status_text}")
     
     # Process files button
     if uploaded_files and st.button("📤 Process Files", type="primary"):
@@ -275,16 +335,22 @@ with st.sidebar:
         status_text = st.empty()
         
         processed_count = 0
+        skipped_count = 0
+        error_count = 0
         total_files = len(uploaded_files)
         
         for i, uploaded_file in enumerate(uploaded_files):
             try:
                 status_text.text(f"Processing {uploaded_file.name}...")
-                progress_bar.progress((i) / total_files)
+                progress_bar.progress(i / total_files)
+                
+                # Get file hash for duplicate detection
+                file_content = uploaded_file.getvalue()
+                file_hash = get_file_hash(file_content)
                 
                 # Extract text based on file type
                 ext = os.path.splitext(uploaded_file.name)[1].lower()
-                file_bytes = io.BytesIO(uploaded_file.getvalue())
+                file_bytes = io.BytesIO(file_content)
                 
                 text = ""
                 if ext == ".pdf":
@@ -295,45 +361,80 @@ with st.sidebar:
                     text = extract_text_from_txt(file_bytes)
                 else:
                     st.warning(f"Unsupported file type: {uploaded_file.name}")
+                    error_count += 1
                     continue
                 
                 if text.strip():
-                    st.session_state.doc_manager.add_file(uploaded_file.name, text)
-                    processed_count += 1
-                    st.success(f"✅ {uploaded_file.name}")
+                    success, message = st.session_state.doc_manager.add_file(
+                        uploaded_file.name, text, file_hash, uploaded_file.size
+                    )
+                    
+                    if success:
+                        st.success(f"✅ {message}")
+                        processed_count += 1
+                    else:
+                        st.info(f"ℹ️ {message}")
+                        skipped_count += 1
                 else:
                     st.warning(f"⚠️ No text found in {uploaded_file.name}")
+                    error_count += 1
                 
             except Exception as e:
                 st.error(f"❌ Error with {uploaded_file.name}: {e}")
+                error_count += 1
         
         progress_bar.progress(1.0)
         status_text.text("Processing complete!")
         
-        if processed_count > 0:
-            st.success(f"🎉 Successfully processed {processed_count} files!")
-        else:
-            st.error("No files were successfully processed.")
+        # Summary
+        st.success(f"🎉 Processing Summary:")
+        st.write(f"- ✅ Processed: {processed_count}")
+        st.write(f"- ℹ️ Skipped (duplicates): {skipped_count}")
+        st.write(f"- ❌ Errors: {error_count}")
+        
+        # Update upload key to refresh file uploader
+        st.session_state.upload_key = st.session_state.get('upload_key', 0) + 1
     
-    # Document status
+    # Document status and management
     st.divider()
     doc_count = st.session_state.doc_manager.get_document_count()
     if doc_count > 0:
         st.success(f"📚 {doc_count} documents loaded")
         
-        # Show document list
-        with st.expander("📋 View Documents"):
-            for i, doc_name in enumerate(st.session_state.doc_manager.get_document_list(), 1):
-                st.write(f"{i}. {doc_name}")
+        # Show document list with management options
+        with st.expander("📋 Manage Documents", expanded=False):
+            doc_list = st.session_state.doc_manager.get_document_list()
+            
+            for i, (doc_name, file_size) in enumerate(doc_list, 1):
+                file_size_mb = file_size / (1024 * 1024) if file_size > 0 else 0
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.write(f"{i}. {doc_name} ({file_size_mb:.1f} MB)")
+                
+                with col2:
+                    if st.button("🗑️", key=f"delete_{i}", help=f"Remove {doc_name}"):
+                        st.session_state.doc_manager.remove_file(doc_name)
+                        st.success(f"Removed {doc_name}")
+                        st.rerun()
         
-        # Clear documents button
-        if st.button("🗑️ Clear All Documents"):
+        # Clear all documents button
+        if st.button("🗑️ Clear All Documents", type="secondary"):
             st.session_state.doc_manager.clear_all()
             st.session_state.messages = []
             st.success("All documents cleared!")
             st.rerun()
     else:
         st.info("📤 Upload documents to get started")
+    
+    # Show processing statistics
+    processed_files_info = st.session_state.doc_manager.get_processed_files_info()
+    if processed_files_info:
+        with st.expander("📊 Processing Statistics"):
+            total_size = sum(info['size'] for info in processed_files_info.values())
+            total_size_mb = total_size / (1024 * 1024)
+            st.write(f"**Total files processed:** {len(processed_files_info)}")
+            st.write(f"**Total size:** {total_size_mb:.1f} MB")
 
 # --- Chat Interface ---
 # Display chat messages
