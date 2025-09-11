@@ -30,9 +30,9 @@ st.sidebar.header("Login")
 
 login_url = f"{SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to={REDIRECT_URL}"
 
-query_params = st.experimental_get_query_params()
-access_token = query_params.get("access_token", [None])[0]
-refresh_token = query_params.get("refresh_token", [None])[0]
+query_params = st.query_params
+access_token = query_params.get("access_token", None)
+refresh_token = query_params.get("refresh_token", None)
 
 if access_token and refresh_token:
     session = supabase.auth.set_session(
@@ -44,6 +44,11 @@ if "session" in st.session_state and st.session_state.session and st.session_sta
     user = st.session_state.session.user
     user_id = user.id
     st.sidebar.success(f"✅ Logged in as {user.email}")
+    if st.sidebar.button("🚪 Logout"):
+        supabase.auth.sign_out()
+        st.session_state.session = None
+        st.query_params.clear()
+        st.rerun()
 else:
     st.sidebar.markdown(f"[🔑 Login with Google]({login_url})")
     st.stop()
