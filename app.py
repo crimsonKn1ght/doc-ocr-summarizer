@@ -34,6 +34,29 @@ except Exception as e:
     st.error(f"❌ Failed to init Supabase client: {type(e).__name__} - {e}")
     st.stop()
 
+# --- Auth Section ---
+st.sidebar.header("Login")
+
+# OAuth login URL (Google)
+login_url = f"{SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to={st.secrets.get('REDIRECT_URL')}"
+
+if "session" not in st.session_state:
+    st.session_state.session = None
+
+# If not logged in, show login button
+if not st.session_state.session:
+    st.sidebar.markdown(f"[🔑 Login with Google]({login_url})")
+    st.stop()
+
+# If logged in, extract user id
+session = supabase.auth.get_session()
+if session and session.user:
+    user_id = session.user.id   # UUID of logged-in user
+    st.sidebar.success(f"Logged in as {session.user.email}")
+else:
+    st.sidebar.error("Not logged in")
+    st.stop()
+
 # --- OCR Function ---
 def ocr_image(image_bytes: bytes) -> str:
     try:
@@ -149,9 +172,6 @@ def load_chat(user_id):
 # --- Streamlit Interface ---
 st.set_page_config(page_title="Document Q&A with Login", page_icon="🔑", layout="wide")
 st.title("🔑 Document Q&A Assistant with Supabase")
-
-# For demo: simple user_id placeholder until Supabase OAuth flow is wired
-user_id = "demo-user"   # later: replace with actual Supabase user ID
 
 # Load chat history
 if "messages" not in st.session_state:
