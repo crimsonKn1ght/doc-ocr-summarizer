@@ -173,7 +173,7 @@ def get_embeddings():
             
             try:
                 # Third try: OpenAI-compatible embeddings (if available)
-                from langchain.embeddings import OpenAIEmbeddings
+                from langchain_community.embeddings import OpenAIEmbeddings
                 if "OPENAI_API_KEY" in st.secrets:
                     embeddings = OpenAIEmbeddings(openai_api_key=st.secrets["OPENAI_API_KEY"])
                     st.success("✅ Using OpenAI embeddings")
