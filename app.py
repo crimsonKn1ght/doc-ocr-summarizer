@@ -7,7 +7,6 @@ from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from PIL import Image
@@ -55,7 +54,7 @@ if logged_in:
         st.query_params.clear()
         st.rerun()
 else:
-    st.sidebar.markdown(f"[🔑 Login with Google]({login_url})")
+    st.sidebar.markdown(f"[🔒 Login with Google]({login_url})")
     user_id = None  # no Supabase link
 
 # --- OCR Function ---
@@ -118,14 +117,112 @@ def get_text_from_files(uploaded_files, use_ocr: bool) -> List[Tuple[str, str]]:
             st.error(f"Error processing {uploaded_file.name}: {e}")
     return extracted_texts
 
+# --- Embedding Function with Fallbacks ---
+def get_embeddings():
+    """Try multiple embedding approaches with fallbacks"""
+    try:
+        # First try: HuggingFace embeddings with explicit device setting
+        from langchain_huggingface import HuggingFaceEmbeddings
+        import torch
+        
+        # Force CPU and disable CUDA
+        device = "cpu"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        torch.set_default_device("cpu")
+        
+        embeddings = HuggingFaceEmbeddings(
+            model_name="all-MiniLM-L6-v2",
+            model_kwargs={
+                "device": device,
+                "trust_remote_code": False
+            },
+            encode_kwargs={
+                "batch_size": 16,
+                "device": device,
+                "show_progress_bar": False
+            }
+        )
+        st.success("✅ Using HuggingFace embeddings")
+        return embeddings
+        
+    except Exception as e1:
+        st.warning(f"HuggingFace embeddings failed: {e1}")
+        
+        try:
+            # Second try: Alternative HuggingFace approach
+            from sentence_transformers import SentenceTransformer
+            import numpy as np
+            from langchain.embeddings.base import Embeddings
+            
+            class CustomSentenceTransformerEmbeddings(Embeddings):
+                def __init__(self):
+                    self.model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+                
+                def embed_documents(self, texts):
+                    return self.model.encode(texts, convert_to_tensor=False).tolist()
+                
+                def embed_query(self, text):
+                    return self.model.encode([text], convert_to_tensor=False)[0].tolist()
+            
+            embeddings = CustomSentenceTransformerEmbeddings()
+            st.success("✅ Using custom SentenceTransformer embeddings")
+            return embeddings
+            
+        except Exception as e2:
+            st.warning(f"Custom SentenceTransformer failed: {e2}")
+            
+            try:
+                # Third try: OpenAI-compatible embeddings (if available)
+                from langchain.embeddings import OpenAIEmbeddings
+                if "OPENAI_API_KEY" in st.secrets:
+                    embeddings = OpenAIEmbeddings(openai_api_key=st.secrets["OPENAI_API_KEY"])
+                    st.success("✅ Using OpenAI embeddings")
+                    return embeddings
+                else:
+                    raise Exception("No OpenAI API key found")
+                    
+            except Exception as e3:
+                st.warning(f"OpenAI embeddings failed: {e3}")
+                
+                # Final fallback: Simple TF-IDF based embeddings
+                from sklearn.feature_extraction.text import TfidfVectorizer
+                import numpy as np
+                
+                class TFIDFEmbeddings(Embeddings):
+                    def __init__(self):
+                        self.vectorizer = TfidfVectorizer(
+                            max_features=384,  # Match dimension of all-MiniLM-L6-v2
+                            stop_words='english',
+                            ngram_range=(1, 2)
+                        )
+                        self.is_fitted = False
+                    
+                    def embed_documents(self, texts):
+                        if not self.is_fitted:
+                            self.vectorizer.fit(texts)
+                            self.is_fitted = True
+                        vectors = self.vectorizer.transform(texts)
+                        return vectors.toarray().tolist()
+                    
+                    def embed_query(self, text):
+                        if not self.is_fitted:
+                            # If not fitted yet, return zero vector
+                            return [0.0] * 384
+                        vector = self.vectorizer.transform([text])
+                        return vector.toarray()[0].tolist()
+                
+                embeddings = TFIDFEmbeddings()
+                st.info("ℹ️ Using TF-IDF embeddings (fallback)")
+                return embeddings
+
 # --- VectorDB Builder ---
 def build_vectordb(chunks):
-    embeddings = HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},      # 👈 Force CPU
-        encode_kwargs={"batch_size": 32}
-    )
-    return FAISS.from_documents(chunks, embeddings)
+    embeddings = get_embeddings()
+    try:
+        return FAISS.from_documents(chunks, embeddings)
+    except Exception as e:
+        st.error(f"Failed to build vector database: {e}")
+        raise e
 
 # --- QA System ---
 class DocumentQA:
@@ -133,8 +230,20 @@ class DocumentQA:
         self.documents = [Document(page_content=text, metadata={"source": src}) for src, text in texts]
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         self.chunks = splitter.split_documents(self.documents)
-        self.vectordb = build_vectordb(self.chunks)
-        self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
+        
+        try:
+            self.vectordb = build_vectordb(self.chunks)
+        except Exception as e:
+            st.error(f"Failed to initialize vector database: {e}")
+            # Fallback to simple text search
+            self.vectordb = None
+            
+        try:
+            self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
+        except Exception as e:
+            st.error(f"Failed to initialize LLM: {e}")
+            raise e
+            
         self.prompt_template = PromptTemplate(
             input_variables=["context", "question"],
             template="""Use the following context to answer the question:
@@ -154,30 +263,62 @@ Answer:"""
         new_chunks = splitter.split_documents(new_docs)
         self.documents.extend(new_docs)
         self.chunks.extend(new_chunks)
-        self.vectordb.add_documents(new_chunks)
+        
+        if self.vectordb:
+            try:
+                self.vectordb.add_documents(new_chunks)
+            except Exception as e:
+                st.warning(f"Failed to add documents to vector database: {e}")
 
     def answer_question(self, q: str) -> str:
-        docs = self.vectordb.similarity_search(q, k=3)
-        context = "\n\n".join([f"Source: {d.metadata['source']}\n{d.page_content}" for d in docs])
-        chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
-        return chain.run(context=context, question=q)
+        try:
+            if self.vectordb:
+                # Use vector search
+                docs = self.vectordb.similarity_search(q, k=3)
+                context = "\n\n".join([f"Source: {d.metadata['source']}\n{d.page_content}" for d in docs])
+            else:
+                # Fallback to simple keyword search
+                relevant_chunks = []
+                query_words = q.lower().split()
+                for chunk in self.chunks[:10]:  # Limit to first 10 chunks
+                    chunk_text = chunk.page_content.lower()
+                    if any(word in chunk_text for word in query_words):
+                        relevant_chunks.append(chunk)
+                
+                if not relevant_chunks:
+                    relevant_chunks = self.chunks[:3]  # Use first 3 chunks if no matches
+                
+                context = "\n\n".join([f"Source: {c.metadata['source']}\n{c.page_content}" for c in relevant_chunks])
+            
+            chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
+            return chain.run(context=context, question=q)
+            
+        except Exception as e:
+            return f"Sorry, I encountered an error while processing your question: {str(e)}"
 
 # --- Chat History Persistence ---
 def save_chat(user_id, messages):
     if user_id:
-        supabase.table("chats").upsert({"user_id": user_id, "messages": messages}).execute()
+        try:
+            supabase.table("chats").upsert({"user_id": user_id, "messages": messages}).execute()
+        except Exception as e:
+            st.warning(f"Failed to save chat: {e}")
     else:
         st.session_state._local_messages = messages  # in-memory only
 
 def load_chat(user_id):
     if user_id:
-        res = supabase.table("chats").select("messages").eq("user_id", user_id).execute()
-        return res.data[0]["messages"] if res.data else []
+        try:
+            res = supabase.table("chats").select("messages").eq("user_id", user_id).execute()
+            return res.data[0]["messages"] if res.data else []
+        except Exception as e:
+            st.warning(f"Failed to load chat: {e}")
+            return []
     else:
         return getattr(st.session_state, "_local_messages", [])
 
 # --- Main Interface ---
-st.title("📄 DocQ&A – Your AI Assistant")
+st.title("📄 DocQ&A — Your AI Assistant")
 
 # Load chat history
 if "messages" not in st.session_state:
@@ -188,16 +329,23 @@ with st.sidebar:
     st.header("📂 Upload Documents")
     use_ocr = st.checkbox("Enable OCR", True)
     files = st.file_uploader("Upload", type=["pdf","docx","txt"], accept_multiple_files=True)
+    
     if "qa" not in st.session_state:
         st.session_state.qa = None
+        
     if files:
-        texts = get_text_from_files(files, use_ocr)
-        if texts:
-            if st.session_state.qa is None:
-                st.session_state.qa = DocumentQA(texts)
-            else:
-                st.session_state.qa.add_documents(texts)
-            st.success(f"✅ Added {len(texts)} docs.")
+        with st.spinner("Processing documents..."):
+            texts = get_text_from_files(files, use_ocr)
+            if texts:
+                try:
+                    if st.session_state.qa is None:
+                        st.session_state.qa = DocumentQA(texts)
+                    else:
+                        st.session_state.qa.add_documents(texts)
+                    st.success(f"✅ Added {len(texts)} docs.")
+                except Exception as e:
+                    st.error(f"Failed to process documents: {e}")
+                    st.info("Please try uploading fewer or smaller documents.")
 
 # Chat UI
 for msg in st.session_state.messages:
@@ -211,11 +359,17 @@ if prompt := st.chat_input("Ask me about your documents..."):
 
     if st.session_state.qa:
         with st.spinner("Thinking..."):
-            ans = st.session_state.qa.answer_question(prompt)
-            st.session_state.messages.append({"role": "assistant", "content": ans})
-            with st.chat_message("assistant"):
-                st.markdown(ans)
-            save_chat(user_id, st.session_state.messages)
+            try:
+                ans = st.session_state.qa.answer_question(prompt)
+                st.session_state.messages.append({"role": "assistant", "content": ans})
+                with st.chat_message("assistant"):
+                    st.markdown(ans)
+                save_chat(user_id, st.session_state.messages)
+            except Exception as e:
+                error_msg = f"I'm sorry, I encountered an error: {str(e)}"
+                st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                with st.chat_message("assistant"):
+                    st.markdown(error_msg)
     else:
         with st.chat_message("assistant"):
             msg = "📂 Please upload documents first!"
