@@ -121,7 +121,9 @@ def get_text_from_files(uploaded_files, use_ocr: bool) -> List[Tuple[str, str]]:
 # --- VectorDB Builder ---
 def build_vectordb(chunks):
     embeddings = HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2", encode_kwargs={"batch_size": 32}
+        model_name="all-MiniLM-L6-v2",
+        model_kwargs={"device": "cpu"},      # 👈 Force CPU
+        encode_kwargs={"batch_size": 32}
     )
     return FAISS.from_documents(chunks, embeddings)
 
