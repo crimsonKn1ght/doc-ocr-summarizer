@@ -21,7 +21,10 @@ supabase>=2.7.0
 httpx==0.27.2
 
 # PyTorch (CPU builds — safe for Streamlit Cloud)
-torch==2.2.2+cpu
-torchvision==0.17.2+cpu
-torchaudio==2.2.2+cpu
--f https://download.pytorch.org/whl/torch_stable.html
+torch==2.2.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+torchvision==0.17.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+torchaudio==2.2.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Fallback dependencies
+scikit-learn>=1.3.0
+numpy>=1.24.0
