@@ -17,7 +17,7 @@ from langchain.embeddings.base import Embeddings
 
 # ----------------- CONFIG ----------------- #
 st.set_page_config(
-    page_title="DocQ&A - Smart Document Assistant",
+    page_title="PDF Q&A tool - Smart Document Assistant",
     page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded"
