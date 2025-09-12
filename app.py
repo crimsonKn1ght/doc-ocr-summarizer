@@ -445,6 +445,6 @@ st.markdown("---")
 st.markdown(
     """
 <div class="footer-content">
-    <p>🚀 Built with Streamlit • Powered by AI • Made with ❤️</p>
+    <p>Like the app? 👍</p>
 </div>
 """, unsafe_allow_html=True)
