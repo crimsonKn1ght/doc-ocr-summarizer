@@ -23,7 +23,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS with chat bubble styles
+# Custom CSS with chat bubble styles and sidebar fix
 st.markdown(
     """
 <style>
@@ -87,10 +87,9 @@ st.markdown(
         margin-bottom: 1rem;
     }
 
-    /* Hide Streamlit branding */
+    /* Hide only menu + footer, keep header for sidebar toggle */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
 
     /* Custom button styling */
     .stButton > button {
