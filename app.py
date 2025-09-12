@@ -22,7 +22,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for frontend (fixed text contrast issues)
+# Custom CSS with chat bubble styles
 st.markdown(
     """
 <style>
@@ -138,19 +138,51 @@ st.markdown(
         border: none;
         border-radius: 10px;
     }
+
+    /* ---------------- CHAT BUBBLES ---------------- */
+    .stChatMessage.user {
+        background: #e0f7fa;
+        color: #004d40;
+        border-radius: 20px 20px 0 20px;
+        padding: 0.8rem 1rem;
+        margin: 0.5rem 0;
+        max-width: 80%;
+        align-self: flex-end;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    .stChatMessage.assistant {
+        background: #f1f8e9;
+        color: #33691e;
+        border-radius: 20px 20px 20px 0;
+        padding: 0.8rem 1rem;
+        margin: 0.5rem 0;
+        max-width: 80%;
+        align-self: flex-start;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    .stChatMessage {
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 0.5rem;
+    }
+
+    .stChatMessage[data-testid="stChatMessage-system"] {
+        background: #eeeeee;
+        color: #555;
+        font-size: 0.9em;
+        border-radius: 10px;
+        text-align: center;
+    }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
 # ----------------- UTILS ----------------- #
-def show_spacing(px: int = 12):
-    st.markdown(f"<div style='height:{px}px'></div>", unsafe_allow_html=True)
-
-
 def get_file_hash(file_content: bytes) -> str:
     return hashlib.md5(file_content).hexdigest()
-
 
 def ocr_image(image_bytes: bytes) -> str:
     try:
@@ -159,9 +191,8 @@ def ocr_image(image_bytes: bytes) -> str:
     except Exception:
         return ""
 
-
 def extract_text_from_pdf(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
-    import fitz  # PyMuPDF
+    import fitz
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     text = ""
     for page in doc:
@@ -175,7 +206,6 @@ def extract_text_from_pdf(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
                     continue
     return text
 
-
 def extract_text_from_docx(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
     from docx import Document as DocxDocument
     doc = DocxDocument(file_bytes)
@@ -183,7 +213,6 @@ def extract_text_from_docx(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
     if use_ocr:
         try:
             for rel in doc.part.rels.values():
-                # Some rels may not have target_ref; guard with try/except
                 try:
                     if "image" in rel.target_ref:
                         text += ocr_image(rel.target_part.blob)
@@ -193,13 +222,11 @@ def extract_text_from_docx(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
             pass
     return text
 
-
 def extract_text_from_txt(file_bytes: io.BytesIO) -> str:
     try:
         return file_bytes.read().decode("utf-8")
     except Exception:
         return file_bytes.read().decode("utf-8", errors="ignore")
-
 
 # ----------------- TFIDF EMBEDDINGS ----------------- #
 class TFIDFEmbeddings:
@@ -238,7 +265,6 @@ class TFIDFEmbeddings:
             return padded.tolist()
         else:
             return dense_vector[: self.dimension].tolist()
-
 
 # ----------------- DOCUMENT MANAGER ----------------- #
 class DocumentManager:
@@ -322,7 +348,6 @@ Answer:""",
         total_size = sum([info.get("size", 0) for info in self.processed_files.values()])
         return {"files": total_files, "words": total_words, "size_mb": round(total_size / (1024 * 1024), 2)}
 
-
 # ----------------- SESSION STATE ----------------- #
 if "doc_manager" not in st.session_state:
     st.session_state.doc_manager = DocumentManager()
@@ -330,7 +355,6 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # ----------------- MAIN APP ----------------- #
-# Header
 st.markdown(
     """
 <div class="main-header">
@@ -449,8 +473,7 @@ else:
             <li><strong>Get Smart Answers:</strong> The AI will search through your documents and provide detailed answers</li>
         </ol>
     </div>
-    """
-    , unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns(3)
 
@@ -461,9 +484,7 @@ else:
             <h4>📄 Multiple Formats</h4>
             <p>Support for PDF, DOCX, and TXT files with intelligent text extraction</p>
         </div>
-        """,
-            unsafe_allow_html=True,
-        )
+        """, unsafe_allow_html=True)
 
     with col2:
         st.markdown(
@@ -472,9 +493,7 @@ else:
             <h4>🔍 OCR Technology</h4>
             <p>Extract text from images and scanned documents automatically</p>
         </div>
-        """,
-            unsafe_allow_html=True,
-        )
+        """, unsafe_allow_html=True)
 
     with col3:
         st.markdown(
@@ -483,9 +502,7 @@ else:
             <h4>🧠 AI-Powered</h4>
             <p>Advanced language model provides context-aware answers to your questions</p>
         </div>
-        """,
-            unsafe_allow_html=True,
-        )
+        """, unsafe_allow_html=True)
 
 st.markdown("---")
 st.markdown(
@@ -493,6 +510,4 @@ st.markdown(
 <div class="footer-content">
     <p>🚀 Built with Streamlit • Powered by AI • Made with ❤️</p>
 </div>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
