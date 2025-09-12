@@ -482,7 +482,7 @@ else:
 # Footer
 st.markdown("---")
 st.markdown("""
-<div style="text-align: center; color: #666; padding: 1rem;">
-    <p>🚀 Built with Streamlit </p>
+<div class="footer-content">
+    <p>🚀 Built with Streamlit • Powered by AI • Made with ❤️</p>
 </div>
 """, unsafe_allow_html=True)
