@@ -17,7 +17,7 @@ from langchain.embeddings.base import Embeddings
 
 # ----------------- CONFIG ----------------- #
 st.set_page_config(
-    page_title="DocQ&A tool - Smart Document Assistant",
+    page_title="docqnatool tool - Smart Document Assistant",
     page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -317,7 +317,7 @@ if "messages" not in st.session_state:
 st.markdown(
     """
 <div class="main-header">
-    <h1>🧠 DocQ&A - Smart Document Assistant</h1>
+    <h1>🧠 docqnatool - Smart Document Assistant</h1>
     <p style="font-size: 1.2em; margin-top: 1rem; opacity: 0.9;">
         Upload your documents and ask intelligent questions powered by AI
     </p>
@@ -406,7 +406,7 @@ else:
         """
     <div class="feature-card">
         <h3>🚀 Get Started</h3>
-        <p>Welcome to DocQ&A! Here's how to use this intelligent document assistant:</p>
+        <p>Welcome to docqnatool! Here's how to use this intelligent document assistant:</p>
         <ol>
             <li><strong>Upload Documents:</strong> Use the sidebar to upload PDF, DOCX, or TXT files</li>
             <li><strong>Enable OCR:</strong> Check the OCR option to extract text from images in your documents</li>
