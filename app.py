@@ -13,6 +13,7 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
+from langchain.embeddings.base import Embeddings
 
 # ----------------- CONFIG ----------------- #
 st.set_page_config(
@@ -229,7 +230,7 @@ def extract_text_from_txt(file_bytes: io.BytesIO) -> str:
         return file_bytes.read().decode("utf-8", errors="ignore")
 
 # ----------------- TFIDF EMBEDDINGS ----------------- #
-class TFIDFEmbeddings:
+class TFIDFEmbeddings(Embeddings):
     def __init__(self, max_features: int = 384):
         self.vectorizer = TfidfVectorizer(
             max_features=max_features,
@@ -245,26 +246,19 @@ class TFIDFEmbeddings:
         if not self.is_fitted:
             self.vectorizer.fit(texts)
             self.is_fitted = True
-        vectors = self.vectorizer.transform(texts)
-        dense_vectors = vectors.toarray()
-        result = []
-        for vector in dense_vectors:
-            if len(vector) < self.dimension:
-                padded = np.pad(vector, (0, self.dimension - len(vector)), "constant")
-                result.append(padded.tolist())
-            else:
-                result.append(vector[: self.dimension].tolist())
-        return result
+        vectors = self.vectorizer.transform(texts).toarray()
+        return [self._pad(v) for v in vectors]
 
     def embed_query(self, text: str) -> List[float]:
         if not self.is_fitted:
             return [0.0] * self.dimension
-        dense_vector = self.vectorizer.transform([text]).toarray()[0]
-        if len(dense_vector) < self.dimension:
-            padded = np.pad(dense_vector, (0, self.dimension - len(dense_vector)), "constant")
-            return padded.tolist()
-        else:
-            return dense_vector[: self.dimension].tolist()
+        vec = self.vectorizer.transform([text]).toarray()[0]
+        return self._pad(vec)
+
+    def _pad(self, vector: np.ndarray) -> List[float]:
+        if len(vector) < self.dimension:
+            vector = np.pad(vector, (0, self.dimension - len(vector)), "constant")
+        return vector[: self.dimension].tolist()
 
 # ----------------- DOCUMENT MANAGER ----------------- #
 class DocumentManager:
