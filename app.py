@@ -23,43 +23,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ----------------- BACKGROUND ANIMATION ----------------- #
-st.markdown(
-    """
-<style>
-.background-wrapper {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-    opacity: 0.18;
-    pointer-events: none; /* let UI elements be clickable */
-}
-</style>
-
-<div class="background-wrapper">
-<svg viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M720 450C720 450 742.459 440.315 755.249 425.626C768.039 ..." stroke="#46A5CA" stroke-width="2.3" stroke-linecap="round">
-  <animate attributeName="stroke-dasharray" values="50 800;20 800;50 800" dur="10s" repeatCount="indefinite"/>
-  <animate attributeName="stroke-dashoffset" values="800;0;800" dur="10s" repeatCount="indefinite"/>
-</path>
-<path d="M720 450C720 450 741.044 435.759 753.062 410.636C765.079 ..." stroke="#8C2F2F" stroke-width="2.3" stroke-linecap="round">
-  <animate attributeName="stroke-dasharray" values="50 800;20 800;50 800" dur="10s" repeatCount="indefinite"/>
-  <animate attributeName="stroke-dashoffset" values="800;0;800" dur="10s" repeatCount="indefinite"/>
-</path>
-<path d="M720 450C720 450 712.336 437.768 690.248 407.156C668.161 ..." stroke="#4FAE4D" stroke-width="2.3" stroke-linecap="round">
-  <animate attributeName="stroke-dasharray" values="50 800;20 800;50 800" dur="10s" repeatCount="indefinite"/>
-  <animate attributeName="stroke-dashoffset" values="800;0;800" dur="10s" repeatCount="indefinite"/>
-</path>
-<!-- Continue with ALL remaining 18 paths here with their stroke colors -->
-</svg>
-</div>
-""",
-    unsafe_allow_html=True
-)
-
 # ----------------- CUSTOM CSS ----------------- #
 st.markdown(
     """
@@ -74,10 +37,111 @@ st.markdown(
         margin-bottom: 2rem;
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     }
-    /* ... keep your other CSS (feature-card, sidebar, buttons, chat, etc.) */
+
+    /* Feature cards */
+    .feature-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        border-left: 4px solid #667eea;
+        margin: 1rem 0;
+        color: #333;
+    }
+    .feature-card h3, .feature-card h4 { color: #222; }
+    .feature-card p, .feature-card li { color: #444; }
+
+    /* Stats */
+    .stats-container {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin: 1rem 0;
+    }
+
+    /* Upload area */
+    .upload-area {
+        border: 2px dashed #667eea;
+        border-radius: 10px;
+        padding: 2rem;
+        text-align: center;
+        background: linear-gradient(135deg, #f8f9ff 0%, #e8ecff 100%);
+        margin: 1rem 0;
+        color: #333;
+    }
+
+    /* Chat container */
+    .chat-container {
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        padding: 1rem;
+        margin: 1rem 0;
+        color: #222;
+    }
+
+    /* Sidebar styling */
+    .sidebar .element-container { margin-bottom: 1rem; }
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+
+    /* Buttons */
+    .stButton > button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 25px;
+        padding: 0.5rem 2rem;
+        font-weight: bold;
+        transition: all 0.3s ease;
+    }
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+
+    /* File uploader */
+    .stFileUploader > div > div {
+        background: linear-gradient(135deg, #f8f9ff 0%, #e8ecff 100%);
+        border: 2px dashed #667eea;
+        border-radius: 10px;
+    }
+
+    /* Messages */
+    .stSuccess { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); border-radius: 10px; }
+    .stError { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); border-radius: 10px; }
+    .stInfo { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); border-radius: 10px; }
+
+    /* Chat bubbles */
+    .stChatMessage.user {
+        background: #e0f7fa;
+        color: #004d40;
+        border-radius: 20px 20px 0 20px;
+        padding: 0.8rem 1rem;
+        margin: 0.5rem 0;
+        max-width: 80%;
+        align-self: flex-end;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .stChatMessage.assistant {
+        background: #f1f8e9;
+        color: #33691e;
+        border-radius: 20px 20px 20px 0;
+        padding: 0.8rem 1rem;
+        margin: 0.5rem 0;
+        max-width: 80%;
+        align-self: flex-start;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .stChatMessage { display: flex; flex-direction: column; margin-bottom: 0.5rem; }
+    .stChatMessage[data-testid="stChatMessage-system"] {
+        background: #eeeeee; color: #555; font-size: 0.9em; border-radius: 10px; text-align: center;
+    }
 </style>
 """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 # ----------------- UTILS ----------------- #
@@ -85,6 +149,7 @@ def get_file_hash(file_content: bytes) -> str:
     return hashlib.md5(file_content).hexdigest()
 
 def normalize_text(text: str) -> str:
+    """Normalize whitespace to avoid duplicate detection issues."""
     return " ".join(text.split())
 
 def ocr_image(image_bytes: bytes) -> str:
@@ -350,6 +415,31 @@ else:
         </ol>
     </div>
     """, unsafe_allow_html=True)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(
+            """
+        <div class="feature-card">
+            <h4>📄 Multiple Formats</h4>
+            <p>Support for PDF, DOCX, and TXT files with intelligent text extraction</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(
+            """
+        <div class="feature-card">
+            <h4>🔍 OCR Technology</h4>
+            <p>Extract text from images and scanned documents automatically</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        st.markdown(
+            """
+        <div class="feature-card">
+            <h4>🧠 AI-Powered</h4>
+            <p>Advanced language model provides context-aware answers to your questions</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 st.markdown("---")
 st.markdown(
