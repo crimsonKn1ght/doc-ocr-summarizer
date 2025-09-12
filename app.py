@@ -1,12 +1,10 @@
 import os
 import io
-import json
 import uuid
 import hashlib
 import streamlit as st
 from PIL import Image
 import pytesseract
-from supabase import create_client
 from typing import List
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -18,13 +16,118 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
 
 # ----------------- CONFIG ----------------- #
-st.set_page_config(page_title="DocQ&A", page_icon="📄", layout="wide")
+st.set_page_config(
+    page_title="DocQ&A - Smart Document Assistant",
+    page_icon="🧠",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-SUPABASE_URL = st.secrets.get("SUPABASE_URL")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
-REDIRECT_URL = st.secrets.get("REDIRECT_URL")
-
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+# Custom CSS for awesome frontend
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 2rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin-bottom: 2rem;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    
+    .feature-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        border-left: 4px solid #667eea;
+        margin: 1rem 0;
+    }
+    
+    .stats-container {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin: 1rem 0;
+    }
+    
+    .upload-area {
+        border: 2px dashed #667eea;
+        border-radius: 10px;
+        padding: 2rem;
+        text-align: center;
+        background: linear-gradient(135deg, #f8f9ff 0%, #e8ecff 100%);
+        margin: 1rem 0;
+    }
+    
+    .chat-container {
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    
+    .sidebar .element-container {
+        margin-bottom: 1rem;
+    }
+    
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Custom button styling */
+    .stButton > button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 25px;
+        padding: 0.5rem 2rem;
+        font-weight: bold;
+        transition: all 0.3s ease;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    
+    /* File uploader styling */
+    .stFileUploader > div > div {
+        background: linear-gradient(135deg, #f8f9ff 0%, #e8ecff 100%);
+        border: 2px dashed #667eea;
+        border-radius: 10px;
+    }
+    
+    /* Sidebar styling */
+    .css-1d391kg {
+        background: linear-gradient(180deg, #f8f9ff 0%, #ffffff 100%);
+    }
+    
+    /* Success/Error messages */
+    .stSuccess {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        border: none;
+        border-radius: 10px;
+    }
+    
+    .stError {
+        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        border: none;
+        border-radius: 10px;
+    }
+    
+    .stInfo {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        border: none;
+        border-radius: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # ----------------- UTILS ----------------- #
 def show_spacing(px=12):
@@ -48,8 +151,11 @@ def extract_text_from_pdf(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
         text += page.get_text()
         if use_ocr:
             for img_meta in page.get_images(full=True):
-                base_image = doc.extract_image(img_meta[0])
-                text += ocr_image(base_image["image"])
+                try:
+                    base_image = doc.extract_image(img_meta[0])
+                    text += ocr_image(base_image["image"])
+                except:
+                    continue
     return text
 
 def extract_text_from_docx(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
@@ -57,13 +163,19 @@ def extract_text_from_docx(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
     doc = DocxDocument(file_bytes)
     text = "\n".join(para.text for para in doc.paragraphs)
     if use_ocr:
-        for rel in doc.part.rels.values():
-            if "image" in rel.target_ref:
-                text += ocr_image(rel.target_part.blob)
+        try:
+            for rel in doc.part.rels.values():
+                if "image" in rel.target_ref:
+                    text += ocr_image(rel.target_part.blob)
+        except:
+            pass
     return text
 
 def extract_text_from_txt(file_bytes: io.BytesIO) -> str:
-    return file_bytes.read().decode("utf-8")
+    try:
+        return file_bytes.read().decode("utf-8")
+    except:
+        return file_bytes.read().decode("utf-8", errors="ignore")
 
 # ----------------- TFIDF EMBEDDINGS ----------------- #
 class TFIDFEmbeddings:
@@ -96,7 +208,7 @@ class TFIDFEmbeddings:
     def embed_query(self, text: str) -> List[float]:
         if not self.is_fitted:
             return [0.0] * self.dimension
-        dense_vector = self.vectorizer.transform([text]).toarray()
+        dense_vector = self.vectorizer.transform([text]).toarray()[0]
         if len(dense_vector) < self.dimension:
             padded = np.pad(dense_vector, (0, self.dimension - len(dense_vector)), 'constant')
             return padded.tolist()
@@ -110,10 +222,16 @@ class DocumentManager:
         self.processed_files = {}
         self.embeddings = TFIDFEmbeddings()
         self.vectordb = None
-        self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
+        
+        # Initialize LLM with error handling
+        try:
+            self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
+        except:
+            self.llm = None
+            
         self.prompt_template = PromptTemplate(
             input_variables=["context", "question"],
-            template="""Use the following context to answer the question. If you cannot find the answer in the context, say "I cannot find the answer in the provided documents."
+            template="""Use the following context to answer the question comprehensively. If you cannot find the answer in the context, say "I cannot find the answer in the provided documents."
 
 Context:
 {context}
@@ -126,6 +244,10 @@ Answer:"""
     def add_file(self, filename: str, content: str, file_hash: str, file_size: int):
         if file_hash in self.processed_files:
             return False, f"File '{filename}' already processed (duplicate content)"
+        
+        if not content.strip():
+            return False, f"File '{filename}' appears to be empty or unreadable"
+            
         doc = Document(page_content=content, metadata={
             "source": filename,
             "file_hash": file_hash,
@@ -134,9 +256,10 @@ Answer:"""
         self.documents.append(doc)
         self.processed_files[file_hash] = {
             "name": filename,
-            "size": file_size
+            "size": file_size,
+            "word_count": len(content.split())
         }
-        return True, f"Processed '{filename}'"
+        return True, f"✅ Successfully processed '{filename}' ({len(content.split())} words)"
 
     def _rebuild_vectordb(self):
         if not self.documents:
@@ -150,128 +273,216 @@ Answer:"""
             _ = self.embeddings.embed_documents(all_texts)
             self.vectordb = FAISS.from_documents(chunks, self.embeddings)
         except Exception as e:
-            st.error(f"Failed to build vector DB: {e}")
+            st.error(f"Failed to build vector database: {e}")
             self.vectordb = None
 
     def answer_question(self, question: str) -> str:
         if not self.documents:
-            return "No documents uploaded."
+            return "❌ No documents uploaded. Please upload some documents first to ask questions."
+        
         if not self.vectordb:
-            return "Document search not ready."
+            return "⚠️ Document search index is not ready. Please try uploading documents again."
+            
+        if not self.llm:
+            return "❌ Language model is not available. Please check your API configuration."
+        
         try:
             docs = self.vectordb.similarity_search(question, k=5)
             if not docs:
-                return "I cannot find any relevant information in the documents."
-            context = "\n\n".join([f"Source: {d.metadata.get('source','unknown')}\n{d.page_content}" for d in docs])
+                return "🔍 I cannot find any relevant information in the uploaded documents for your question."
+            
+            context = "\n\n".join([f"📄 Source: {d.metadata.get('source','Unknown')}\n{d.page_content}" for d in docs])
             chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
-            return chain.run(context=context, question=question)
+            response = chain.run(context=context, question=question)
+            return response
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"❌ Error processing your question: {str(e)}"
 
-# ----------------- CHAT & CONVERSATIONS ----------------- #
-def save_chat(user_id, conv_id, messages):
-    if not supabase or not user_id: return
-    supabase.table("conversations").upsert({
-        "user_id": user_id,
-        "conversation_id": conv_id,
-        "messages": json.dumps(messages)
-    }).execute()
-
-def load_chat(user_id, conv_id):
-    if not supabase or not user_id: return []
-    res = supabase.table("conversations").select("messages")\
-        .eq("user_id", user_id).eq("conversation_id", conv_id).execute()
-    if res.data and len(res.data) > 0:
-        return json.loads(res.data[0]["messages"])
-    return []
-
-def list_conversations(user_id):
-    if not supabase or not user_id: return []
-    res = supabase.table("conversations").select("conversation_id")\
-        .eq("user_id", user_id).execute()
-    return [c["conversation_id"] for c in res.data] if res.data else []
+    def get_stats(self):
+        total_files = len(self.processed_files)
+        total_words = sum([info.get('word_count', 0) for info in self.processed_files.values()])
+        total_size = sum([info.get('size', 0) for info in self.processed_files.values()])
+        return {
+            'files': total_files,
+            'words': total_words,
+            'size_mb': round(total_size / (1024*1024), 2)
+        }
 
 # ----------------- SESSION STATE ----------------- #
 if "doc_manager" not in st.session_state:
     st.session_state.doc_manager = DocumentManager()
-if "staged_files" not in st.session_state:
-    st.session_state.staged_files = []
-if "user" not in st.session_state:
-    st.session_state.user = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "conv_id" not in st.session_state:
-    st.session_state.conv_id = str(uuid.uuid4())
 
-# ----------------- LOGIN ----------------- #
-query_params = st.query_params
-if "error" in query_params:
-    st.error("Login failed. Please try again.")
-elif "code" in query_params and st.session_state.user is None:
-    try:
-        session = supabase.auth.exchange_code_for_session(query_params["code"][0])
-        st.session_state.user = session.user
-        st.query_params.clear()
+# ----------------- MAIN APP ----------------- #
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>🧠 DocQ&A - Smart Document Assistant</h1>
+    <p style="font-size: 1.2em; margin-top: 1rem; opacity: 0.9;">
+        Upload your documents and ask intelligent questions powered by AI
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar for document upload
+with st.sidebar:
+    st.markdown("### 📁 Document Upload")
+    
+    # Upload area
+    uploaded_files = st.file_uploader(
+        "Choose your documents",
+        type=["pdf", "docx", "txt"],
+        accept_multiple_files=True,
+        help="Supported formats: PDF, DOCX, TXT"
+    )
+    
+    # OCR option
+    use_ocr = st.checkbox("🔍 Enable OCR for images", value=True, help="Extract text from images in documents")
+    
+    # Clear all button
+    if st.button("🗑️ Clear All Documents"):
+        st.session_state.doc_manager = DocumentManager()
+        st.session_state.messages = []
+        st.success("All documents cleared!")
         st.rerun()
-    except Exception:
-        st.error("Could not log you in. Please try again.")
 
-user = st.session_state.user
+    # Document statistics
+    stats = st.session_state.doc_manager.get_stats()
+    if stats['files'] > 0:
+        st.markdown("### 📊 Document Statistics")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("📄 Files", stats['files'])
+            st.metric("💾 Size (MB)", stats['size_mb'])
+        with col2:
+            st.metric("📝 Words", f"{stats['words']:,}")
+            
+        # List processed files
+        st.markdown("### 📋 Processed Files")
+        for file_info in st.session_state.doc_manager.processed_files.values():
+            st.markdown(f"• **{file_info['name']}** ({file_info['word_count']:,} words)")
 
-# ----------------- ANONYMOUS OR LOGGED-IN ----------------- #
-if not user:
-    login_url = f"{SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to={REDIRECT_URL}"
-    st.markdown(f"""
-    <div style="display:flex; justify-content:center; align-items:center; height:80vh;">
-      <div style="text-align:center; padding:2rem; border-radius:1rem; box-shadow:0 4px 12px rgba(0,0,0,0.1); background:white; max-width:400px;">
-        <h2>👋 Welcome to DocQ&A</h2>
-        <p>Sign in to save your chats and documents</p>
-        <a href="{login_url}">
-          <button style="padding:0.8rem 1.5rem; border:none; border-radius:0.5rem; background:#4285F4; color:white; font-size:1rem; cursor:pointer;">
-            Sign in with Google
-          </button>
-        </a>
-      </div>
+# Process uploaded files
+if uploaded_files:
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, uploaded_file in enumerate(uploaded_files):
+        progress_bar.progress((i + 1) / len(uploaded_files))
+        status_text.text(f"Processing {uploaded_file.name}...")
+        
+        file_data = uploaded_file.getvalue()
+        file_hash = get_file_hash(file_data)
+        
+        # Skip if already processed
+        if file_hash in st.session_state.doc_manager.processed_files:
+            continue
+            
+        # Extract text based on file type
+        file_extension = os.path.splitext(uploaded_file.name)[1].lower()
+        text_content = ""
+        
+        try:
+            if file_extension == ".pdf":
+                text_content = extract_text_from_pdf(io.BytesIO(file_data), use_ocr)
+            elif file_extension == ".docx":
+                text_content = extract_text_from_docx(io.BytesIO(file_data), use_ocr)
+            elif file_extension == ".txt":
+                text_content = extract_text_from_txt(io.BytesIO(file_data))
+            
+            # Add to document manager
+            success, message = st.session_state.doc_manager.add_file(
+                uploaded_file.name, text_content, file_hash, uploaded_file.size
+            )
+            
+            if success:
+                st.success(message)
+            else:
+                st.info(message)
+                
+        except Exception as e:
+            st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
+    
+    # Rebuild vector database
+    with st.spinner("🔄 Building search index..."):
+        st.session_state.doc_manager._rebuild_vectordb()
+    
+    progress_bar.empty()
+    status_text.empty()
+    st.success("🎉 All documents processed successfully!")
+
+# Main chat interface
+if st.session_state.doc_manager.documents:
+    st.markdown("### 💬 Chat with your Documents")
+    
+    # Display chat messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    # Chat input
+    if prompt := st.chat_input("Ask me anything about your documents..."):
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Generate and display response
+        with st.chat_message("assistant"):
+            with st.spinner("🤔 Thinking..."):
+                response = st.session_state.doc_manager.answer_question(prompt)
+            st.markdown(response)
+        
+        # Add assistant response to chat history
+        st.session_state.messages.append({"role": "assistant", "content": response})
+
+else:
+    # Welcome message when no documents
+    st.markdown("""
+    <div class="feature-card">
+        <h3>🚀 Get Started</h3>
+        <p>Welcome to DocQ&A! Here's how to use this intelligent document assistant:</p>
+        <ol>
+            <li><strong>Upload Documents:</strong> Use the sidebar to upload PDF, DOCX, or TXT files</li>
+            <li><strong>Enable OCR:</strong> Check the OCR option to extract text from images in your documents</li>
+            <li><strong>Ask Questions:</strong> Once uploaded, ask any questions about your documents</li>
+            <li><strong>Get Smart Answers:</strong> The AI will search through your documents and provide detailed answers</li>
+        </ol>
     </div>
     """, unsafe_allow_html=True)
-else:
-    st.sidebar.success(f"Logged in as {user.email}")
-    if st.sidebar.button("Logout"):
-        st.session_state.pop("user")
-        st.session_state.pop("messages", None)
-        st.rerun()
+    
+    # Feature highlights
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("""
+        <div class="feature-card">
+            <h4>📄 Multiple Formats</h4>
+            <p>Support for PDF, DOCX, and TXT files with intelligent text extraction</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class="feature-card">
+            <h4>🔍 OCR Technology</h4>
+            <p>Extract text from images and scanned documents automatically</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class="feature-card">
+            <h4>🧠 AI-Powered</h4>
+            <p>Advanced language model provides context-aware answers to your questions</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # ----------------- DOCUMENT UPLOAD ----------------- #
-    st.sidebar.subheader("📂 Upload Documents")
-    uploaded_files = st.sidebar.file_uploader("Choose files", type=["pdf","docx","txt"], accept_multiple_files=True)
-    use_ocr = st.sidebar.checkbox("Enable OCR", True)
-
-    for f in uploaded_files:
-        data = f.getvalue()
-        file_hash = get_file_hash(data)
-        if file_hash in st.session_state.doc_manager.processed_files: continue
-        ext = os.path.splitext(f.name)[1].lower()
-        text = ""
-        if ext == ".pdf":
-            text = extract_text_from_pdf(io.BytesIO(data), use_ocr)
-        elif ext == ".docx":
-            text = extract_text_from_docx(io.BytesIO(data), use_ocr)
-        elif ext == ".txt":
-            text = extract_text_from_txt(io.BytesIO(data))
-        success, msg = st.session_state.doc_manager.add_file(f.name, text, file_hash, f.size)
-        st.success(msg) if success else st.info(msg)
-    st.session_state.doc_manager._rebuild_vectordb()
-
-    # ----------------- CHAT ----------------- #
-    conv_id = st.session_state.conv_id
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    if prompt := st.chat_input("Ask me about your documents..."):
-        st.session_state.messages.append({"role":"user","content":prompt})
-        with st.chat_message("user"): st.markdown(prompt)
-        answer = st.session_state.doc_manager.answer_question(prompt)
-        st.session_state.messages.append({"role":"assistant","content":answer})
-        with st.chat_message("assistant"): st.markdown(answer)
-        save_chat(user.id, conv_id, st.session_state.messages)
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 Built with Streamlit </p>
+</div>
+""", unsafe_allow_html=True)
