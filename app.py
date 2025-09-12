@@ -23,7 +23,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for awesome frontend
+# Custom CSS for frontend (fixed text contrast issues)
 st.markdown("""
 <style>
     .main-header {
@@ -43,6 +43,15 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         border-left: 4px solid #667eea;
         margin: 1rem 0;
+        color: #333; /* ✅ Dark text */
+    }
+    
+    .feature-card h3, .feature-card h4 {
+        color: #222; /* ✅ Dark headings */
+    }
+    
+    .feature-card p, .feature-card li {
+        color: #444; /* ✅ Readable text */
     }
     
     .stats-container {
@@ -61,6 +70,7 @@ st.markdown("""
         text-align: center;
         background: linear-gradient(135deg, #f8f9ff 0%, #e8ecff 100%);
         margin: 1rem 0;
+        color: #333; /* ✅ Ensure readable text */
     }
     
     .chat-container {
@@ -69,6 +79,7 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         padding: 1rem;
         margin: 1rem 0;
+        color: #222; /* ✅ readable */
     }
     
     .sidebar .element-container {
@@ -106,6 +117,7 @@ st.markdown("""
     /* Sidebar styling */
     .css-1d391kg {
         background: linear-gradient(180deg, #f8f9ff 0%, #ffffff 100%);
+        color: #222; /* ✅ Dark text in sidebar */
     }
     
     /* Success/Error messages */
@@ -185,7 +197,7 @@ class TFIDFEmbeddings:
             stop_words='english',
             ngram_range=(1, 2),
             lowercase=True,
-            token_pattern=r'\b[a-zA-Z]{2,}\b'
+            token_pattern=r'\\b[a-zA-Z]{2,}\\b'
         )
         self.is_fitted = False
         self.dimension = max_features
@@ -223,7 +235,6 @@ class DocumentManager:
         self.embeddings = TFIDFEmbeddings()
         self.vectordb = None
         
-        # Initialize LLM with error handling
         try:
             self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
         except:
@@ -231,14 +242,14 @@ class DocumentManager:
             
         self.prompt_template = PromptTemplate(
             input_variables=["context", "question"],
-            template="""Use the following context to answer the question comprehensively. If you cannot find the answer in the context, say "I cannot find the answer in the provided documents."
+            template=\"\"\"Use the following context to answer the question comprehensively. If you cannot find the answer in the context, say "I cannot find the answer in the provided documents."
 
 Context:
 {context}
 
 Question: {question}
 
-Answer:"""
+Answer:\"\"\"
         )
 
     def add_file(self, filename: str, content: str, file_hash: str, file_size: int):
@@ -291,7 +302,7 @@ Answer:"""
             if not docs:
                 return "🔍 I cannot find any relevant information in the uploaded documents for your question."
             
-            context = "\n\n".join([f"📄 Source: {d.metadata.get('source','Unknown')}\n{d.page_content}" for d in docs])
+            context = "\\n\\n".join([f"📄 Source: {d.metadata.get('source','Unknown')}\\n{d.page_content}" for d in docs])
             chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
             response = chain.run(context=context, question=question)
             return response
@@ -329,7 +340,6 @@ st.markdown("""
 with st.sidebar:
     st.markdown("### 📁 Document Upload")
     
-    # Upload area
     uploaded_files = st.file_uploader(
         "Choose your documents",
         type=["pdf", "docx", "txt"],
@@ -337,17 +347,14 @@ with st.sidebar:
         help="Supported formats: PDF, DOCX, TXT"
     )
     
-    # OCR option
     use_ocr = st.checkbox("🔍 Enable OCR for images", value=True, help="Extract text from images in documents")
     
-    # Clear all button
     if st.button("🗑️ Clear All Documents"):
         st.session_state.doc_manager = DocumentManager()
         st.session_state.messages = []
         st.success("All documents cleared!")
         st.rerun()
 
-    # Document statistics
     stats = st.session_state.doc_manager.get_stats()
     if stats['files'] > 0:
         st.markdown("### 📊 Document Statistics")
@@ -358,7 +365,6 @@ with st.sidebar:
         with col2:
             st.metric("📝 Words", f"{stats['words']:,}")
             
-        # List processed files
         st.markdown("### 📋 Processed Files")
         for file_info in st.session_state.doc_manager.processed_files.values():
             st.markdown(f"• **{file_info['name']}** ({file_info['word_count']:,} words)")
@@ -375,11 +381,9 @@ if uploaded_files:
         file_data = uploaded_file.getvalue()
         file_hash = get_file_hash(file_data)
         
-        # Skip if already processed
         if file_hash in st.session_state.doc_manager.processed_files:
             continue
             
-        # Extract text based on file type
         file_extension = os.path.splitext(uploaded_file.name)[1].lower()
         text_content = ""
         
@@ -391,7 +395,6 @@ if uploaded_files:
             elif file_extension == ".txt":
                 text_content = extract_text_from_txt(io.BytesIO(file_data))
             
-            # Add to document manager
             success, message = st.session_state.doc_manager.add_file(
                 uploaded_file.name, text_content, file_hash, uploaded_file.size
             )
@@ -404,7 +407,6 @@ if uploaded_files:
         except Exception as e:
             st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
     
-    # Rebuild vector database
     with st.spinner("🔄 Building search index..."):
         st.session_state.doc_manager._rebuild_vectordb()
     
@@ -416,29 +418,23 @@ if uploaded_files:
 if st.session_state.doc_manager.documents:
     st.markdown("### 💬 Chat with your Documents")
     
-    # Display chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
-    # Chat input
     if prompt := st.chat_input("Ask me anything about your documents..."):
-        # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         
-        # Generate and display response
         with st.chat_message("assistant"):
             with st.spinner("🤔 Thinking..."):
                 response = st.session_state.doc_manager.answer_question(prompt)
             st.markdown(response)
         
-        # Add assistant response to chat history
         st.session_state.messages.append({"role": "assistant", "content": response})
 
 else:
-    # Welcome message when no documents
     st.markdown("""
     <div class="feature-card">
         <h3>🚀 Get Started</h3>
@@ -452,7 +448,6 @@ else:
     </div>
     """, unsafe_allow_html=True)
     
-    # Feature highlights
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -479,7 +474,6 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-# Footer
 st.markdown("---")
 st.markdown("""
 <div class="footer-content">
