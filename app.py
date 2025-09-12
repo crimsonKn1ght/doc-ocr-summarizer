@@ -148,6 +148,10 @@ st.markdown(
 def get_file_hash(file_content: bytes) -> str:
     return hashlib.md5(file_content).hexdigest()
 
+def normalize_text(text: str) -> str:
+    """Normalize whitespace to avoid duplicate detection issues."""
+    return " ".join(text.split())
+
 def ocr_image(image_bytes: bytes) -> str:
     try:
         image = Image.open(io.BytesIO(image_bytes))
@@ -163,23 +167,21 @@ def extract_text_from_pdf(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
         page_text = page.get_text()
         if page_text:
             text += page_text + "\n"
-
         if use_ocr:
             for img_meta in page.get_images(full=True):
                 try:
                     base_image = doc.extract_image(img_meta[0])
                     ocr_text = ocr_image(base_image["image"])
-                    if ocr_text.strip() and ocr_text not in text:  # ✅ prevent duplicate OCR
+                    if ocr_text.strip() and ocr_text not in text:
                         text += "\n" + ocr_text
                 except Exception:
                     continue
-    return text
+    return normalize_text(text)
 
 def extract_text_from_docx(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
     from docx import Document as DocxDocument
     doc = DocxDocument(file_bytes)
     text = "\n".join(para.text for para in doc.paragraphs)
-
     if use_ocr:
         try:
             for rel in doc.part.rels.values():
@@ -192,13 +194,14 @@ def extract_text_from_docx(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
                     continue
         except Exception:
             pass
-    return text
+    return normalize_text(text)
 
 def extract_text_from_txt(file_bytes: io.BytesIO) -> str:
     try:
-        return file_bytes.read().decode("utf-8")
+        text = file_bytes.read().decode("utf-8")
     except Exception:
-        return file_bytes.read().decode("utf-8", errors="ignore")
+        text = file_bytes.read().decode("utf-8", errors="ignore")
+    return normalize_text(text)
 
 # ----------------- TFIDF EMBEDDINGS ----------------- #
 class TFIDFEmbeddings(Embeddings):
@@ -238,12 +241,10 @@ class DocumentManager:
         self.processed_files = {}
         self.embeddings = TFIDFEmbeddings()
         self.vectordb = None
-
         try:
             self.llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
         except Exception:
             self.llm = None
-
         self.prompt_template = PromptTemplate(
             input_variables=["context", "question"],
             template="""Use the following context to answer the question comprehensively. If you cannot find the answer in the context, say "I cannot find the answer in the provided documents."
@@ -259,10 +260,8 @@ Answer:""",
     def add_file(self, filename: str, content: str, file_hash: str, file_size: int):
         if file_hash in self.processed_files:
             return False, f"File '{filename}' already processed (duplicate content)"
-
         if not content.strip():
             return False, f"File '{filename}' appears to be empty or unreadable"
-
         doc = Document(page_content=content, metadata={"source": filename, "file_hash": file_hash, "file_size": file_size})
         self.documents.append(doc)
         self.processed_files[file_hash] = {"name": filename, "size": file_size, "word_count": len(content.split())}
@@ -286,24 +285,19 @@ Answer:""",
     def answer_question(self, question: str) -> str:
         if not self.documents:
             return "❌ No documents uploaded. Please upload some documents first to ask questions."
-
         if not self.vectordb:
             return "⚠️ Document search index is not ready. Please try uploading documents again."
-
         if not self.llm:
             return "❌ Language model is not available. Please check your API configuration."
-
         try:
             docs = self.vectordb.similarity_search(question, k=5)
             if not docs:
                 return "🔍 I cannot find any relevant information in the uploaded documents for your question."
-
             context = "\n\n".join(
                 [f"📄 Source: {d.metadata.get('source','Unknown')}\n{d.page_content}" for d in docs]
             )
             chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
-            response = chain.run(context=context, question=question)
-            return response
+            return chain.run(context=context, question=question)
         except Exception as e:
             return f"❌ Error processing your question: {str(e)}"
 
@@ -335,19 +329,15 @@ st.markdown(
 # Sidebar for document upload
 with st.sidebar:
     st.markdown("### 📁 Document Upload")
-
     uploaded_files = st.file_uploader(
         "Choose your documents", type=["pdf", "docx", "txt"], accept_multiple_files=True, help="Supported formats: PDF, DOCX, TXT"
     )
-
     use_ocr = st.checkbox("🔍 Enable OCR for images", value=True, help="Extract text from images in documents")
-
     if st.button("🗑️ Clear All Documents"):
         st.session_state.doc_manager = DocumentManager()
         st.session_state.messages = []
         st.success("All documents cleared!")
         st.rerun()
-
     stats = st.session_state.doc_manager.get_stats()
     if stats["files"] > 0:
         st.markdown("### 📊 Document Statistics")
@@ -357,31 +347,28 @@ with st.sidebar:
             st.metric("💾 Size (MB)", stats["size_mb"])
         with col2:
             st.metric("📝 Words", f"{stats['words']:,}")
-
         st.markdown("### 📋 Processed Files")
+        seen_names = set()
         for file_info in st.session_state.doc_manager.processed_files.values():
-            st.markdown(f"• **{file_info['name']}** ({file_info['word_count']:,} words)")
+            if file_info["name"] not in seen_names:
+                st.markdown(f"• **{file_info['name']}** ({file_info['word_count']:,} words)")
+                seen_names.add(file_info["name"])
 
 # Process uploaded files
 if uploaded_files:
     progress_bar = st.progress(0)
     status_text = st.empty()
-
     for i, uploaded_file in enumerate(uploaded_files):
         progress_bar.progress((i + 1) / len(uploaded_files))
         status_text.text(f"Processing {uploaded_file.name}...")
-
         file_data = uploaded_file.getvalue()
         file_bytes = io.BytesIO(file_data)
-        file_bytes.seek(0)  # ✅ ensure clean start
+        file_bytes.seek(0)
         file_hash = get_file_hash(file_data)
-
         if file_hash in st.session_state.doc_manager.processed_files:
             continue
-
         file_extension = os.path.splitext(uploaded_file.name)[1].lower()
         text_content = ""
-
         try:
             if file_extension == ".pdf":
                 text_content = extract_text_from_pdf(file_bytes, use_ocr)
@@ -389,20 +376,13 @@ if uploaded_files:
                 text_content = extract_text_from_docx(file_bytes, use_ocr)
             elif file_extension == ".txt":
                 text_content = extract_text_from_txt(file_bytes)
-
             success, message = st.session_state.doc_manager.add_file(uploaded_file.name, text_content, file_hash, uploaded_file.size)
-
-            if success:
-                st.success(message)
-            else:
-                st.info(message)
-
+            if success: st.success(message)
+            else: st.info(message)
         except Exception as e:
             st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
-
     with st.spinner("🔄 Building search index..."):
         st.session_state.doc_manager._rebuild_vectordb()
-
     progress_bar.empty()
     status_text.empty()
     st.success("🎉 All documents processed successfully!")
@@ -410,23 +390,17 @@ if uploaded_files:
 # Main chat interface
 if st.session_state.doc_manager.documents:
     st.markdown("### 💬 Chat with your Documents")
-
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-
     if prompt := st.chat_input("Ask me anything about your documents..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
+        with st.chat_message("user"): st.markdown(prompt)
         with st.chat_message("assistant"):
             with st.spinner("🤔 Thinking..."):
                 response = st.session_state.doc_manager.answer_question(prompt)
             st.markdown(response)
-
         st.session_state.messages.append({"role": "assistant", "content": response})
-
 else:
     st.markdown(
         """
@@ -441,9 +415,7 @@ else:
         </ol>
     </div>
     """, unsafe_allow_html=True)
-
     col1, col2, col3 = st.columns(3)
-
     with col1:
         st.markdown(
             """
@@ -452,7 +424,6 @@ else:
             <p>Support for PDF, DOCX, and TXT files with intelligent text extraction</p>
         </div>
         """, unsafe_allow_html=True)
-
     with col2:
         st.markdown(
             """
@@ -461,7 +432,6 @@ else:
             <p>Extract text from images and scanned documents automatically</p>
         </div>
         """, unsafe_allow_html=True)
-
     with col3:
         st.markdown(
             """
