@@ -23,10 +23,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS with chat bubble styles and sidebar fix
+# ----------------- CUSTOM CSS ----------------- #
 st.markdown(
     """
 <style>
+    /* Header */
     .main-header {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 2rem;
@@ -37,6 +38,7 @@ st.markdown(
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     }
 
+    /* Feature cards */
     .feature-card {
         background: white;
         padding: 1.5rem;
@@ -46,15 +48,10 @@ st.markdown(
         margin: 1rem 0;
         color: #333;
     }
+    .feature-card h3, .feature-card h4 { color: #222; }
+    .feature-card p, .feature-card li { color: #444; }
 
-    .feature-card h3, .feature-card h4 {
-        color: #222;
-    }
-
-    .feature-card p, .feature-card li {
-        color: #444;
-    }
-
+    /* Stats */
     .stats-container {
         background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
         padding: 1rem;
@@ -64,6 +61,7 @@ st.markdown(
         margin: 1rem 0;
     }
 
+    /* Upload area */
     .upload-area {
         border: 2px dashed #667eea;
         border-radius: 10px;
@@ -74,6 +72,7 @@ st.markdown(
         color: #333;
     }
 
+    /* Chat container */
     .chat-container {
         background: white;
         border-radius: 10px;
@@ -83,15 +82,12 @@ st.markdown(
         color: #222;
     }
 
-    .sidebar .element-container {
-        margin-bottom: 1rem;
-    }
-
-    /* Hide only menu + footer, keep header for sidebar toggle */
+    /* Sidebar styling */
+    .sidebar .element-container { margin-bottom: 1rem; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 
-    /* Custom button styling */
+    /* Buttons */
     .stButton > button {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -101,45 +97,24 @@ st.markdown(
         font-weight: bold;
         transition: all 0.3s ease;
     }
-
     .stButton > button:hover {
         transform: translateY(-2px);
         box-shadow: 0 5px 15px rgba(0,0,0,0.2);
     }
 
-    /* File uploader styling */
+    /* File uploader */
     .stFileUploader > div > div {
         background: linear-gradient(135deg, #f8f9ff 0%, #e8ecff 100%);
         border: 2px dashed #667eea;
         border-radius: 10px;
     }
 
-    /* Sidebar styling */
-    .css-1d391kg {
-        background: linear-gradient(180deg, #f8f9ff 0%, #ffffff 100%);
-        color: #222;
-    }
+    /* Messages */
+    .stSuccess { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); border-radius: 10px; }
+    .stError { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); border-radius: 10px; }
+    .stInfo { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); border-radius: 10px; }
 
-    /* Success/Error messages */
-    .stSuccess {
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-        border: none;
-        border-radius: 10px;
-    }
-
-    .stError {
-        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
-        border: none;
-        border-radius: 10px;
-    }
-
-    .stInfo {
-        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
-        border: none;
-        border-radius: 10px;
-    }
-
-    /* ---------------- CHAT BUBBLES ---------------- */
+    /* Chat bubbles */
     .stChatMessage.user {
         background: #e0f7fa;
         color: #004d40;
@@ -150,7 +125,6 @@ st.markdown(
         align-self: flex-end;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
-
     .stChatMessage.assistant {
         background: #f1f8e9;
         color: #33691e;
@@ -161,19 +135,9 @@ st.markdown(
         align-self: flex-start;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
-
-    .stChatMessage {
-        display: flex;
-        flex-direction: column;
-        margin-bottom: 0.5rem;
-    }
-
+    .stChatMessage { display: flex; flex-direction: column; margin-bottom: 0.5rem; }
     .stChatMessage[data-testid="stChatMessage-system"] {
-        background: #eeeeee;
-        color: #555;
-        font-size: 0.9em;
-        border-radius: 10px;
-        text-align: center;
+        background: #eeeeee; color: #555; font-size: 0.9em; border-radius: 10px; text-align: center;
     }
 </style>
 """,
@@ -196,12 +160,17 @@ def extract_text_from_pdf(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     text = ""
     for page in doc:
-        text += page.get_text()
+        page_text = page.get_text()
+        if page_text:
+            text += page_text + "\n"
+
         if use_ocr:
             for img_meta in page.get_images(full=True):
                 try:
                     base_image = doc.extract_image(img_meta[0])
-                    text += ocr_image(base_image["image"])
+                    ocr_text = ocr_image(base_image["image"])
+                    if ocr_text.strip() and ocr_text not in text:  # ✅ prevent duplicate OCR
+                        text += "\n" + ocr_text
                 except Exception:
                     continue
     return text
@@ -210,12 +179,15 @@ def extract_text_from_docx(file_bytes: io.BytesIO, use_ocr: bool = True) -> str:
     from docx import Document as DocxDocument
     doc = DocxDocument(file_bytes)
     text = "\n".join(para.text for para in doc.paragraphs)
+
     if use_ocr:
         try:
             for rel in doc.part.rels.values():
                 try:
                     if "image" in rel.target_ref:
-                        text += ocr_image(rel.target_part.blob)
+                        ocr_text = ocr_image(rel.target_part.blob)
+                        if ocr_text.strip() and ocr_text not in text:
+                            text += "\n" + ocr_text
                 except Exception:
                     continue
         except Exception:
@@ -400,6 +372,8 @@ if uploaded_files:
         status_text.text(f"Processing {uploaded_file.name}...")
 
         file_data = uploaded_file.getvalue()
+        file_bytes = io.BytesIO(file_data)
+        file_bytes.seek(0)  # ✅ ensure clean start
         file_hash = get_file_hash(file_data)
 
         if file_hash in st.session_state.doc_manager.processed_files:
@@ -410,11 +384,11 @@ if uploaded_files:
 
         try:
             if file_extension == ".pdf":
-                text_content = extract_text_from_pdf(io.BytesIO(file_data), use_ocr)
+                text_content = extract_text_from_pdf(file_bytes, use_ocr)
             elif file_extension == ".docx":
-                text_content = extract_text_from_docx(io.BytesIO(file_data), use_ocr)
+                text_content = extract_text_from_docx(file_bytes, use_ocr)
             elif file_extension == ".txt":
-                text_content = extract_text_from_txt(io.BytesIO(file_data))
+                text_content = extract_text_from_txt(file_bytes)
 
             success, message = st.session_state.doc_manager.add_file(uploaded_file.name, text_content, file_hash, uploaded_file.size)
 
